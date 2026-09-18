@@ -2,16 +2,15 @@
 import { createCliRenderer } from "@opentui/core"
 import pkg from "../package.json" with { type: "json" }
 import { App } from "./app"
-import { DemoBackend } from "./backend/demo"
 import { TailscaleBackend, findTailscaleBinary } from "./backend/tailscale"
-import { BackendError, type Backend } from "./backend/types"
+import { BackendError } from "./backend/types"
 import { theme } from "./theme"
 
 interface Cli {
-  demo: boolean
   sudo: boolean
   refresh: number
   details: boolean
+  mullvadPing: boolean
   bin?: string
   help: boolean
   version: boolean
@@ -23,16 +22,17 @@ function usage(): string {
 Usage: tsexit [options]
 
 Options:
-  --demo             Run with generated demo data (no Tailscale needed)
-  --sudo             Prefix "tailscale set" with "sudo -n" (passwordless sudo required)
-  --bin <path>       Path to the tailscale CLI (default: $TAILSCALE_BIN, PATH, known locations)
-  --refresh <sec>    Auto-refresh interval in seconds (default 5, 0 disables)
-  --no-details       Start with the details panel hidden (toggle with i)
-  -h, --help         Show this help
-  -v, --version      Print the version
+  --sudo              Prefix "tailscale set" with "sudo -n" (passwordless sudo required)
+  --bin <path>        Path to the tailscale CLI (default: $TAILSCALE_BIN, PATH, known locations)
+  --refresh <sec>     Auto-refresh interval in seconds (default 5, 0 disables)
+  --no-details        Start with the details panel hidden (toggle with i)
+  --no-mullvad-ping   Never contact api.mullvad.net; Mullvad nodes then have no latency
+  -h, --help          Show this help
+  -v, --version       Print the version
 
-Keys: arrows/jk move, Enter connect/disconnect, d disconnect, a suggested node,
-      p ping, / search, f filter, s sort, l LAN access, r refresh, ? help, q quit.
+Keys: arrows/jk move, Enter connect/disconnect, d disconnect, a auto exit node,
+      A suggested node, p ping, / search, f filter, s sort, l LAN access, r refresh,
+      ? help, q quit.
 Mouse: click to select, double-click to connect, wheel to scroll, click chips.
 
 On Linux, "tailscale set" needs root or an operator user. Run once:
@@ -41,7 +41,7 @@ On Linux, "tailscale set" needs root or an operator user. Run once:
 }
 
 function parseArgs(argv: string[]): Cli {
-  const cli: Cli = { demo: false, sudo: false, refresh: 5, details: true, help: false, version: false }
+  const cli: Cli = { sudo: false, refresh: 5, details: true, mullvadPing: true, help: false, version: false }
   for (let i = 0; i < argv.length; i++) {
     const raw = argv[i]!
     const eq = raw.indexOf("=")
@@ -57,9 +57,6 @@ function parseArgs(argv: string[]): Cli {
       return next
     }
     switch (flag) {
-      case "--demo":
-        cli.demo = true
-        break
       case "--sudo":
         cli.sudo = true
         break
@@ -77,6 +74,9 @@ function parseArgs(argv: string[]): Cli {
       }
       case "--no-details":
         cli.details = false
+        break
+      case "--no-mullvad-ping":
+        cli.mullvadPing = false
         break
       case "-h":
       case "--help":
@@ -106,25 +106,20 @@ async function main(): Promise<void> {
     return
   }
 
-  let backend: Backend
-  if (cli.demo) {
-    backend = new DemoBackend()
-  } else {
-    const bin = cli.bin ?? findTailscaleBinary()
-    if (!bin) {
-      console.error("tailscale CLI not found. Install Tailscale, set TAILSCALE_BIN, pass --bin <path>, or try --demo.")
-      process.exit(1)
-    }
-    backend = new TailscaleBackend({ bin, sudo: cli.sudo })
-    // Preflight outside the alternate screen so a broken setup prints a readable error.
-    try {
-      await backend.status()
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      console.error(`Cannot read Tailscale status: ${msg}`)
-      if (e instanceof BackendError && e.hint) console.error(e.hint)
-      process.exit(1)
-    }
+  const bin = cli.bin ?? findTailscaleBinary()
+  if (!bin) {
+    console.error("tailscale CLI not found. Install Tailscale, set TAILSCALE_BIN, or pass --bin <path>.")
+    process.exit(1)
+  }
+  const backend = new TailscaleBackend({ bin, sudo: cli.sudo, mullvadPing: cli.mullvadPing })
+  // Preflight outside the alternate screen so a broken setup prints a readable error.
+  try {
+    await backend.status()
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e)
+    console.error(`Cannot read Tailscale status: ${msg}`)
+    if (e instanceof BackendError && e.hint) console.error(e.hint)
+    process.exit(1)
   }
 
   if (!process.stdout.isTTY || !process.stdin.isTTY) {

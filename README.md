@@ -1,38 +1,38 @@
 # tsexit
 
-A single-screen terminal UI for Tailscale exit nodes. See every exit node in your tailnet (including Mullvad nodes), connect, disconnect, switch, search, filter, sort, ping, and toggle LAN access. Everything works with the keyboard alone and with the mouse alone.
+A single-screen terminal UI for Tailscale exit nodes. See every exit node in your tailnet (including Mullvad nodes), connect, disconnect, switch, let Tailscale pick automatically, search, filter, sort, measure latency, and toggle LAN access. Everything works with the keyboard alone and with the mouse alone.
 
-Built with [OpenTUI](https://opentui.com) on [Bun](https://bun.sh).
+Built with [OpenTUI](https://opentui.com) on [Bun](https://bun.sh). It only drives the official `tailscale` CLI, so it does exactly what the commands you would type do.
 
 ```text
- ◉ CONNECTED via hel-vps 100.64.10.70 · direct 120.118.61.141:41641 · ↓ 3.4 MB ↑ 19 MB
- tsexit v0.1.0 · DEMO · tailnet kirill.github · device my-laptop · LAN access off · 57 exit nodes (50 online) · upda…
- ╭────────────────────────────────────╮
- │ ⌕ search name, IP, country, city,  │  All   Online   Tailnet   Mullvad   Status ▴   ★ Auto: hel-vps   LAN off   ?
- ╰────────────────────────────────────╯
- ╭─ Exit nodes · 57 ─────────────────────────────────────────────────╮ ╭─ Details ──────────────────────────────────╮
- │    Node             Status ▴ Location            Latency OS       │ │ home-server                                │
- │ ◉★ hel-vps          ACTIVE   tailnet              6.0 ms Linux   ▀│ │ home-server.tail4a2b.ts.net                │
- │▸●  home-server      online   tailnet               15 ms Linux    │ │                                            │
- │ ●  office-gw        online   tailnet               11 ms Linux    │ │ Status     ● online  (Enter to use)        │
- │ ●  us-east-vps      online   tailnet              148 ms Linux    │ │ Address    100.64.11.77                    │
- │ ●  at-vie-wg-001    online   AT Vienna             49 ms Linux    │ │            fd7a:115c:a1e0::c               │
- │ ●  au-mel-wg-001    online   AU Melbourne         335 ms Linux    │ │ Location   unknown                         │
- │ ●  au-syd-wg-001    online   AU Sydney            400 ms Linux    │ │ Type       Tailnet device                  │
- │ ●  be-bru-wg-001    online   BE Brussels           45 ms Linux    │ │ OS         Linux                           │
- │ ●  br-sao-wg-001    online   BR São Paulo         292 ms Linux    │ │ Owner      kirill@github                   │
- │ ●  ca-tor-wg-001    online   CA Toronto           147 ms Linux    │ │ Last seen  online now                      │
- │ ●  ca-van-wg-001    online   CA Vancouver         230 ms Linux    │ │ Handshake  1m ago                          │
- │ ●  ch-zrh-wg-001    online   CH Zürich             40 ms Linux    │ │ Path       direct 99.93.74.136:41641       │
- │ ●  cz-prg-wg-001    online   CZ Prague             45 ms Linux    │ │ Traffic    ↓ 12 MB  ↑ 3.0 MB               │
- │ ●  de-ber-wg-001    online   DE Berlin             34 ms Linux    │ │ Latency    15 ms                           │
- │ ●  de-ber-wg-002    online   DE Berlin             35 ms Linux    │ │                                            │
- │ ●  de-fra-wg-001    online   DE Frankfurt          33 ms Linux    │ │                                            │
- │ ●  de-fra-wg-002    online   DE Frankfurt          35 ms Linux    │ │                                            │
- │ ●  dk-cph-wg-001    online   DK Copenhagen         27 ms Linux    │ │                                            │
- │ ●  ee-tll-wg-001    online   EE Tallinn            12 ms Linux    │ │                                            │
- │ ●  es-mad-wg-001    online   ES Madrid             76 ms Linux    │ │                                            │
- │ ●  gb-lon-wg-001    online   GB London             52 ms Linux    │ │  Connect   Ping   Copy IP                  │
+ ◉ CONNECTED via fi-hel-wg-203 auto 100.74.4.51 · Helsinki, FI · direct 185.65.133.165:51820 · ↓ 101 MB ↑ 11 MB
+ tsexit v0.1.0 · tailnet leventcovkk@gmail.com · device k-pc · LAN access on · 533 exit nodes (533 online) · updated…
+ ╭────────────────────────────────╮
+ │ ⌕ search name, IP, country, ci │  All   Online   Tailnet   Mullvad   Status ▴   ★ Auto on   LAN on   Pinging…   ?
+ ╰────────────────────────────────╯
+ ╭─ Exit nodes · 533 ────────────────────────────────────────────────╮ ╭─ Details ──────────────────────────────────╮
+ │    Node                Status ▴ Location            Latency  Prio │ │ fi-hel-wg-203                              │
+ │▸◉★ fi-hel-wg-203       ACTIVE   FI Helsinki          1.8 ms   500▀│ │ fi-hel-wg-203.mullvad.ts.net               │
+ │ ●  al-tia-wg-001       online   AL Tirana             54 ms   100 │ │                                            │
+ │ ●  al-tia-wg-002       online   AL Tirana             56 ms   100 │ │ Status     ◉ ACTIVE                        │
+ │ ●  al-tia-wg-003       online   AL Tirana             54 ms   100 │ │ Address    100.74.4.51                     │
+ │ ●  al-tia-wg-004       online   AL Tirana             54 ms   100 │ │            fd7a:115c:a1e0::2801:4c4        │
+ │ ●  ar-bue-wg-001       online   AR Buenos Aires      325 ms   100 │ │ Location   Helsinki, Finland (FI)          │
+ │ ●  ar-bue-wg-002       online   AR Buenos Aires      325 ms   100 │ │ Type       Mullvad exit node               │
+ │ ●  at-vie-wg-001       online   AT Vienna             48 ms   100 │ │ Mode       auto, chosen by Tailscale       │
+ │ ●  at-vie-wg-002       online   AT Vienna             46 ms   100 │ │ Owner      tagged-devices                  │
+ │ ●  at-vie-wg-003       online   AT Vienna             48 ms   100 │ │ Tags       tag:mullvad-exit-node           │
+ │ ●  at-vie-wg-101       online   AT Vienna             41 ms   100 │ │ Priority   500                             │
+ │ ●  at-vie-wg-102       online   AT Vienna             41 ms   100 │ │ Last seen  online now                      │
+ │ ●  au-adl-wg-301       online   AU Adelaide          342 ms   100 │ │ Handshake  1m ago                          │
+ │ ●  au-adl-wg-302       online   AU Adelaide          327 ms   100 │ │ Path       direct 185.65.133.165:51820     │
+ │ ●  au-adl-wg-303       online   AU Adelaide          346 ms   100 │ │ Traffic    ↓ 101 MB  ↑ 11 MB               │
+ │ ●  au-bne-wg-301       online   AU Brisbane          334 ms   100 │ │ Latency    1.8 ms                          │
+ │ ●  au-bne-wg-302       online   AU Brisbane          325 ms   100 │ │            icmp 185.65.133.165             │
+ │ ●  au-bne-wg-303       online   AU Brisbane          317 ms   100 │ │ Suggested  ★ Tailscale's pick now (A)      │
+ │ ●  au-mel-wg-401       online   AU Melbourne         421 ms   100 │ │                                            │
+ │ ●  au-mel-wg-403       online   AU Melbourne         418 ms   100 │ │                                            │
+ │ ●  au-per-wg-301       online   AU Perth             374 ms   100 │ │  Disconnect   Ping   Copy IP               │
  ╰───────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────╯
  ↑↓ move  ⏎ connect/disconnect  d disconnect  a auto  p ping  P ping all  / search  f filter  s sort  ? help  q quit
 ```
@@ -41,27 +41,27 @@ Built with [OpenTUI](https://opentui.com) on [Bun](https://bun.sh).
 
 - One screen: connection status, search and filters, the node list, a details panel, key hints.
 - Connect, disconnect and switch exit nodes with Enter, a double-click, or the Connect button.
+- Auto exit node: `a` turns Tailscale's automatic selection on (`--exit-node=auto:any`); Tailscale then picks the best node and follows it. Picking a node yourself turns it off again, as it does on the CLI.
 - Search across name, IP, country, city, OS, owner and tags. Space-separated terms must all match; `!term` excludes.
 - Filters: All, Online, Tailnet (your own devices), Mullvad. Sort by status, name, location, latency, priority or OS; click a column header to sort by it.
-- Latency: ping one node (`p`), every visible node (`P`), or right-click a row. Results feed the latency sort.
-- Tailscale's suggested exit node is starred; `a` (or the Auto chip) connects to it.
-- LAN access toggle, traffic counters, connection path (direct or DERP relay), last seen, key expiry, owner, tags.
+- Latency: ping one node (`p`), every visible node (`P` or the Ping all chip), or right-click a row. Your own devices are measured with `tailscale ping`; Mullvad nodes with ICMP to the relay's public address (see below). Results feed the latency sort.
+- Tailscale's suggested exit node is starred; `A` (or the details line) connects to it once.
+- LAN access toggle, traffic counters, connection path (direct, peer relay or DERP), last seen, key expiry, owner, tags.
 - Auto-refresh (5 s by default), busy spinner, toasts for results and errors with actionable hints.
-- Responsive layout: the details panel hides below 100 columns, chrome shrinks below 22 rows, every mouse control has a key.
-- Demo mode with realistic generated data so you can try it without Tailscale.
+- Responsive layout: the details panel hides below 100 columns, chrome shrinks below 22 rows, the OS column disappears when no node reports one (Mullvad-only tailnets), every mouse control has a key.
 
 ## Requirements
 
 - [Bun](https://bun.sh) 1.3 or newer.
-- The `tailscale` CLI, connected to a tailnet with at least one approved exit node.
+- The `tailscale` CLI, connected to a tailnet with at least one approved exit node (or the Mullvad add-on).
+- For Mullvad latency: the system `ping` command and access to `api.mullvad.net` (see [Latency](#latency)).
 - Linux is the primary target. macOS works with the CLI from the App Store or standalone app (`/Applications/Tailscale.app/Contents/MacOS/Tailscale` is found automatically). Windows is untested.
 
 ## Run
 
 ```sh
 bun install
-bun start            # real Tailscale
-bun run demo         # generated data, no Tailscale needed
+bun start
 ```
 
 Install the `tsexit` command globally:
@@ -78,7 +78,7 @@ bun run build        # dist/tsexit
 
 ### Permissions
 
-Reading status needs no privileges, but `tailscale set` (connect, disconnect, LAN access) needs root or an operator user on Linux. Do this once:
+Reading status needs no privileges, but `tailscale set` (connect, disconnect, auto mode, LAN access) needs root or an operator user on Linux. Do this once:
 
 ```sh
 sudo tailscale set --operator=$USER
@@ -89,13 +89,13 @@ Alternatively start with `--sudo`, which runs `sudo -n tailscale set ...` and th
 ## Options
 
 ```text
---demo             Run with generated demo data (no Tailscale needed)
---sudo             Prefix "tailscale set" with "sudo -n"
---bin <path>       Path to the tailscale CLI (default: $TAILSCALE_BIN, PATH, known locations)
---refresh <sec>    Auto-refresh interval in seconds (default 5, 0 disables)
---no-details       Start with the details panel hidden (toggle with i)
--h, --help         Show help
--v, --version      Print the version
+--sudo              Prefix "tailscale set" with "sudo -n"
+--bin <path>        Path to the tailscale CLI (default: $TAILSCALE_BIN, PATH, known locations)
+--refresh <sec>     Auto-refresh interval in seconds (default 5, 0 disables)
+--no-details        Start with the details panel hidden (toggle with i)
+--no-mullvad-ping   Never contact api.mullvad.net; Mullvad nodes then have no latency
+-h, --help          Show help
+-v, --version       Print the version
 ```
 
 ## Keyboard
@@ -106,8 +106,9 @@ Alternatively start with `--sudo`, which runs `sudo -n tailscale set ...` and th
 | `PgUp` `PgDn` `Ctrl-U` `Ctrl-D` | Page |
 | `Home` `End` `g` `G` | First / last node |
 | `Enter` | Connect to the selected node, or disconnect if it is active |
-| `d` `x` `Backspace` | Disconnect (stop using an exit node) |
-| `a` | Connect to Tailscale's suggested exit node |
+| `d` `x` `Backspace` | Disconnect (stop using an exit node; also turns auto mode off) |
+| `a` | Auto exit node on / off. Turning it off keeps the node Tailscale chose |
+| `A` | Connect to Tailscale's suggested exit node once |
 | `p` / `P` | Ping selected node / ping all visible online nodes |
 | `/` `Tab` `Ctrl-F` | Focus the search box |
 | `Enter` / `Esc` (in search) | Apply and go back / clear and go back |
@@ -122,7 +123,7 @@ Alternatively start with `--sudo`, which runs `sudo -n tailscale set ...` and th
 | `Esc` | Clear search, dismiss toast, close help |
 | `q` `Ctrl-C` | Quit |
 
-Connecting to an offline node asks for a second `Enter` within 4 seconds.
+Connecting to an offline node asks for a second `Enter` within 4 seconds. Nodes with an expired key cannot be selected.
 
 ## Mouse
 
@@ -138,8 +139,9 @@ Connecting to an offline node asks for a second `Enter` within 4 seconds.
 | Click the search box | Type to filter |
 | Click `All` `Online` `Tailnet` `Mullvad` | Filter |
 | Click the sort chip | Next sort field (Shift-click reverses) |
-| Click `★ Auto` | Connect to the suggested node |
+| Click `★ Auto on/off` | Toggle Tailscale's automatic exit node |
 | Click `LAN on/off` | Toggle LAN access |
+| Click `Ping all` | Ping every visible online node (same as `P`) |
 | Click `?` | Help |
 | `Connect` `Ping` `Copy IP` buttons | Act on the selected node |
 
@@ -147,35 +149,45 @@ Mouse support needs a terminal that reports mouse events, which is nearly all of
 
 ## How it works
 
-The app only drives the official CLI, so it behaves exactly like the commands you would type:
-
 | Purpose | Command |
 | --- | --- |
-| Node list, current exit node, self, tailnet | `tailscale status --json` |
-| LAN access preference | `tailscale debug prefs` |
+| Node list, current exit node, self, tailnet, health | `tailscale status --json` |
+| LAN access and auto exit node preferences | `tailscale debug prefs` |
 | Suggested node | `tailscale exit-node suggest` |
 | Connect / disconnect | `tailscale set --exit-node=<ip>` / `tailscale set --exit-node=` |
+| Auto exit node | `tailscale set --exit-node=auto:any` |
 | LAN access | `tailscale set --exit-node-allow-lan-access=<bool>` |
-| Latency | `tailscale ping -c 1 --timeout 3s <ip>` |
+| Latency, own devices | `tailscale ping -c 1 --timeout 3s <ip>` |
+| Latency, Mullvad nodes | `ping -c 1 <relay public IP>` |
 
-Only peers that advertise an approved exit node are listed. Mullvad nodes are recognised by their `tag:mullvad-exit-node` tag and shown with country and city from the status output.
+Only peers that advertise an approved exit node are listed. Mullvad nodes are recognised by their `tag:mullvad-exit-node` tag and shown with the country and city from the status output.
+
+### Latency
+
+Mullvad exit nodes do not answer `tailscale ping` in any mode (disco, TSMP or ICMP through the tunnel), so tsexit resolves the node's host name (for example `fi-hel-wg-203`) through Mullvad's public relay list at `https://api.mullvad.net/www/relays/wireguard/` and sends one ICMP echo to the relay's public address with the system `ping`. The list is fetched once per session, on the first Mullvad ping. The measurement is the round trip from your device to the relay along your current route, so while an exit node is active the echo travels through it. Pass `--no-mullvad-ping` to keep the tool from contacting Mullvad; Mullvad nodes then show no latency.
+
+Your own devices are measured with `tailscale ping`, which reports the path taken (direct endpoint, peer relay or DERP region). The details panel shows which method produced the number.
 
 ## Development
 
 ```sh
 bun test              # unit tests plus headless UI tests driven through OpenTUI's test renderer
 bun run typecheck
-bun run screenshot    # prints the demo UI as text
-bun run dev           # demo mode with file watching
+bun run screenshot    # renders the UI against your real tailnet and prints it as text; add --ping to fill the latency column
+bun run dev           # restart on file changes
 ```
+
+The UI tests run against an in-memory backend in `test/fixture.ts` whose node data is a `tailscale status --json` document in the exact shape the CLI emits, fed through the real parser.
 
 Layout of the code:
 
-- `src/main.ts` argument parsing, backend selection, renderer lifecycle
+- `src/main.ts` argument parsing, preflight, renderer lifecycle
 - `src/app.ts` the UI: layout, rendering, keyboard and mouse handling, actions
 - `src/model.ts` node model, search, filters, sorting
 - `src/backend/tailscale.ts` CLI runner and `tailscale status --json` parsing
-- `src/backend/demo.ts` deterministic generated data
+- `src/backend/mullvad.ts` Mullvad relay list lookup for latency
+- `src/backend/icmp.ts` system `ping` invocation and parsing
+- `src/backend/exec.ts` process runner with timeouts
 - `src/format.ts`, `src/theme.ts` text helpers and colours
 
 ## License

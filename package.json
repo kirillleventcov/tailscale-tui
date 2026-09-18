@@ -14,8 +14,7 @@
   ],
   "scripts": {
     "start": "bun run src/main.ts",
-    "demo": "bun run src/main.ts --demo",
-    "dev": "bun --watch src/main.ts --demo",
+    "dev": "bun --watch src/main.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "screenshot": "bun run scripts/screenshot.ts",

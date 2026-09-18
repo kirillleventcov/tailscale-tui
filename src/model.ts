@@ -12,6 +12,7 @@ export interface ExitNode {
   /** Preferred (IPv4) Tailscale address. */
   ip: string
   ips: string[]
+  /** Empty for Mullvad nodes; Tailscale does not report their OS. */
   os: string
   online: boolean
   /** Currently selected as the exit node for this device. */
@@ -19,6 +20,7 @@ export interface ExitNode {
   /** Advertises (and is approved as) an exit node. */
   exitNodeOption: boolean
   expired: boolean
+  keyExpiry?: Date
   country?: string
   countryCode?: string
   city?: string
@@ -30,8 +32,12 @@ export interface ExitNode {
   lastHandshake?: Date
   rxBytes: number
   txBytes: number
+  /** DERP region the connection is relayed through, when not direct. */
   relay?: string
+  /** Direct endpoint in use, when the path is direct. */
   curAddr?: string
+  /** Peer relay in use (Tailscale peer relays), when any. */
+  peerRelay?: string
 }
 
 export interface SelfInfo {
@@ -40,6 +46,9 @@ export interface SelfInfo {
   ips: string[]
   os: string
   online: boolean
+  /** This device advertises an exit node itself. */
+  exitNodeOption: boolean
+  keyExpiry?: Date
 }
 
 export interface ExitNodeStatus {
@@ -57,6 +66,8 @@ export interface TailscaleState {
   exitNode: ExitNodeStatus | null
   /** `null` when the preference could not be read. */
   allowLan: boolean | null
+  /** Tailscale picks and follows the best exit node (`--exit-node=auto:any`); `null` when unknown. */
+  autoExitNode: boolean | null
   health: string[]
   nodes: ExitNode[]
   fetchedAt: number

@@ -118,8 +118,11 @@ interface Column {
 const COL_GAP = 1
 const NAME_MIN = 14
 
-/** Pick the columns that fit in `total` cells; the name column absorbs the remainder. */
-export function computeColumns(total: number): Column[] {
+/**
+ * Pick the columns that fit in `total` cells; the name column absorbs the remainder.
+ * The OS column is dropped when no node reports one (Tailscale reports no OS for Mullvad nodes).
+ */
+export function computeColumns(total: number, showOs = true): Column[] {
   const cols: Column[] = [
     { id: "mark", label: "", width: 3, align: "left" },
     { id: "name", label: "Node", width: NAME_MIN, align: "left", sort: "name" },
@@ -133,6 +136,7 @@ export function computeColumns(total: number): Column[] {
   ]
   let used = 3 + COL_GAP + NAME_MIN
   for (const c of optional) {
+    if (c.id === "os" && !showOs) continue
     if (used + COL_GAP + c.width > total) break
     cols.push(c)
     used += COL_GAP + c.width
@@ -180,6 +184,7 @@ function latencyChunk(v: Latency | undefined, w: number): TextChunk {
 
 function pathLabel(n: ExitNode): string {
   if (n.curAddr) return `direct ${n.curAddr}`
+  if (n.peerRelay) return `via peer relay ${n.peerRelay}`
   if (n.relay) return `relayed via DERP ${n.relay}`
   return n.active ? "negotiating path…" : "—"
 }
@@ -223,13 +228,13 @@ const COMPACT_HEIGHT = 22
 
 const HELP_LINES: [string, string][] = [
   ["Navigate", "↑/k ↓/j move · PgUp/PgDn page · Home/g End/G · Tab or / search"],
-  ["Exit node", "Enter connect or disconnect · d/x disconnect · a use suggested node"],
+  ["Exit node", "Enter connect or disconnect · d/x disconnect · a auto exit node on/off · A use suggested node"],
   ["Search", "type to filter by name, IP, country, city, OS, owner · !word excludes"],
   ["Filter, sort", "f/F filter · 1-4 pick filter · s sort field · S reverse · click column headers"],
-  ["Measure", "p ping selected · P ping all visible · right-click a row pings it"],
+  ["Measure", "p ping selected · P ping all visible · right-click pings · Mullvad nodes: ICMP to their relay"],
   ["Options", "l LAN access while connected · i details panel · r/F5 refresh"],
   ["Clipboard", "y or c copy Tailscale IP · middle-click a row copies it"],
-  ["Mouse", "click select · double-click connect · wheel scroll · drag scrollbar · click chips"],
+  ["Mouse", "click select · double-click connect · wheel scroll · drag scrollbar · click chips and Ping all"],
   ["General", "? or F1 this help · Esc clear/close · q quit"],
 ]
 
@@ -256,6 +261,9 @@ export class App {
   private busy: string | null = null
   private spin = 0
   private readonly latency = new Map<string, Latency>()
+  private readonly latencyVia = new Map<string, string>()
+  private showOs = true
+  private pingAllRunning = false
   private suggestedName: string | null = null
   private forceArm: { id: string; until: number } | null = null
   private lastRefresh = 0
@@ -290,6 +298,7 @@ export class App {
   private sortChip!: Chip
   private autoChip!: Chip
   private lanChip!: Chip
+  private pingAllChip!: Chip
   private helpChip!: Chip
   private main!: BoxRenderable
   private listPanel!: BoxRenderable
@@ -473,8 +482,9 @@ export class App {
     }
     this.sortLabel = new TextRenderable(r, { content: "Sort", fg: theme.textMuted, height: 1, selectable: false })
     this.sortChip = this.makeChip("sort", "", (e) => (e.modifiers.shift ? this.toggleDesc() : this.nextSort(1)))
-    this.autoChip = this.makeChip("auto", "★ Auto", () => void this.connectSuggested())
+    this.autoChip = this.makeChip("auto", "★ Auto", () => void this.toggleAuto())
     this.lanChip = this.makeChip("lan", "LAN", () => void this.toggleLan())
+    this.pingAllChip = this.makeChip("pingall", "Ping all", () => this.pingAll())
     this.helpChip = this.makeChip("help", "?", () => this.toggleHelp())
 
     this.toolbar.add(this.searchBox)
@@ -484,6 +494,7 @@ export class App {
     this.toolbar.add(this.sortChip.box)
     this.toolbar.add(this.autoChip.box)
     this.toolbar.add(this.lanChip.box)
+    this.toolbar.add(this.pingAllChip.box)
     this.toolbar.add(this.helpChip.box)
 
     // ---- main: list + details
@@ -696,6 +707,7 @@ export class App {
     this.sortChip.box.visible = W >= 72
     this.helpChip.box.visible = W >= 76
     this.lanChip.box.visible = W >= 86
+    this.pingAllChip.box.visible = W >= 100
     this.autoChip.box.visible = W >= 112
     this.showLabel.visible = W >= 124
     this.sortLabel.visible = W >= 124
@@ -726,7 +738,7 @@ export class App {
   private syncRows(h: number, w: number): void {
     if (w !== this.colsWidth) {
       this.colsWidth = w
-      this.cols = computeColumns(w)
+      this.cols = computeColumns(w, this.showOs)
     }
     this.ensureRows(h)
     this.ensureVisible()
@@ -824,30 +836,35 @@ export class App {
       l1.push(dim(s.backendState === "NeedsLogin" ? " · run: tailscale login" : " · run: tailscale up"))
     } else {
       const cur = this.currentNode()
+      const auto = s.autoExitNode === true
       if (cur) {
         const offline = !cur.online || (s.exitNode !== null && !s.exitNode.online)
         const c = offline ? theme.yellow : theme.green
         l1.push(ch("◉ ", { fg: c, bold: true }), ch("CONNECTED", { fg: c, bold: true }), dim(" via "), ch(cur.name, { fg: theme.text, bold: true }))
+        if (auto) l1.push(ch(" auto", { fg: theme.yellow }))
         if (cur.ip) l1.push(dim(` ${cur.ip}`))
         const loc = locationLabel(cur)
         if (loc) l1.push(dim(" · "), ch(loc, { fg: theme.text }))
         l1.push(dim(" · "), dim(pathLabel(cur)))
         l1.push(dim(" · "), dim(`↓ ${humanBytes(cur.rxBytes)} ↑ ${humanBytes(cur.txBytes)}`))
         if (offline) l1.push(ch("  exit node is offline", { fg: theme.yellow, bold: true }))
+      } else if (auto) {
+        l1.push(ch("◌ ", { fg: theme.yellow }), ch("AUTO", { fg: theme.yellow, bold: true }))
+        l1.push(dim(" · waiting for Tailscale to pick an exit node; traffic is held until then"))
       } else {
         l1.push(ch("○ ", { fg: theme.textDim }), ch("NO EXIT NODE", { fg: theme.text, bold: true }))
         l1.push(dim(" · internet traffic leaves this device directly"))
         const sug = this.suggestedNode()
-        if (sug) l1.push(dim(" · suggested "), ch(`★ ${sug.name}`, { fg: theme.yellow }), dim(" (a)"))
+        if (sug) l1.push(dim(" · suggested "), ch(`★ ${sug.name}`, { fg: theme.yellow }), dim(" (A)"))
       }
     }
     if (this.busy) l1.push(ch(`  ${SPINNER[this.spin % SPINNER.length]} ${this.busy}`, { fg: theme.accent }))
 
     l2.push(ch("tsexit", { fg: theme.accent, bold: true }), dim(` v${this.version}`))
-    if (this.backend.kind === "demo") l2.push(dim(" · "), ch("DEMO", { fg: theme.purple, bold: true }))
     if (s) {
       if (s.tailnet) l2.push(dim(" · tailnet "), ch(s.tailnet, { fg: theme.text }))
       if (s.self) l2.push(dim(" · device "), ch(s.self.hostName, { fg: theme.text }))
+      if (s.self?.exitNodeOption) l2.push(dim(" (exit node)"))
       l2.push(dim(" · LAN access "))
       if (s.allowLan === null) l2.push(dim("unknown"))
       else l2.push(ch(s.allowLan ? "on" : "off", { fg: s.allowLan ? theme.green : theme.textDim }))
@@ -869,13 +886,17 @@ export class App {
     }
     const sort = SORTS.find((x) => x.id === this.query.sort)!
     this.setChip(this.sortChip, `${sort.label} ${this.query.desc ? "▾" : "▴"}`, { fg: theme.accent })
-    const sug = this.suggestedNode()
-    this.setChip(this.autoChip, sug ? `★ Auto: ${truncate(sug.name, 16)}` : "★ Auto", { fg: theme.yellow })
+    const auto = this.state?.autoExitNode
+    this.setChip(this.autoChip, auto === null || auto === undefined ? "★ Auto ?" : auto ? "★ Auto on" : "★ Auto off", {
+      fg: auto ? theme.yellow : theme.chipFg,
+      bold: auto === true,
+    })
     const lan = this.state?.allowLan
     this.setChip(this.lanChip, lan === null || lan === undefined ? "LAN ?" : lan ? "LAN on" : "LAN off", {
       fg: lan ? theme.green : theme.chipFg,
       bold: lan === true,
     })
+    this.setChip(this.pingAllChip, this.pingAllRunning ? "Pinging…" : "Ping all", { fg: this.pingAllRunning ? theme.accent : theme.chipFg })
     this.setChip(this.helpChip, "?", { fg: theme.accent, bold: true })
   }
 
@@ -995,7 +1016,8 @@ export class App {
     if (v6) line("", ch(fit(v6, valW), { fg: theme.textDim }))
     line("Location", ch(fit(locationLong(n), valW)))
     line("Type", ch(n.isMullvad ? "Mullvad exit node" : "Tailnet device", { fg: n.isMullvad ? theme.purple : theme.cyan }))
-    line("OS", ch(osLabel(n.os)))
+    if (n.active && this.state?.autoExitNode) line("Mode", ch("auto, chosen by Tailscale", { fg: theme.yellow }))
+    if (n.os) line("OS", ch(osLabel(n.os)))
     if (n.owner) line("Owner", ch(fit(n.owner, valW)))
     if (n.tags.length > 0) line("Tags", ch(fit(n.tags.join(" "), valW), { fg: theme.textDim }))
     if (n.priority !== undefined) line("Priority", ch(String(n.priority)))
@@ -1004,9 +1026,12 @@ export class App {
     line("Path", ch(fit(pathLabel(n), valW), { fg: theme.textDim }))
     line("Traffic", ch(`↓ ${humanBytes(n.rxBytes)}  ↑ ${humanBytes(n.txBytes)}`))
     const lat = this.latency.get(n.id)
+    const via = this.latencyVia.get(n.id)
     line("Latency", latencyChunk(lat, 0), ch(lat === undefined ? "  (p to ping)" : "", { fg: theme.textMuted }))
-    if (n.id === this.suggestedNode()?.id) line("Suggested", ch("★ Tailscale's pick right now", { fg: theme.yellow }))
-    if (n.expired) line("Key", ch("expired, re-authenticate this device", { fg: theme.red }))
+    if (lat !== undefined && lat !== "pending" && via) line("", ch(fit(via, valW), { fg: theme.textMuted }))
+    if (n.id === this.suggestedNode()?.id) line("Suggested", ch("★ Tailscale's pick now (A)", { fg: theme.yellow }))
+    if (n.expired) line("Key", ch("expired, re-authenticate it", { fg: theme.red }))
+    else if (n.keyExpiry) line("Key expiry", ch(n.keyExpiry.toISOString().slice(0, 10), { fg: theme.textDim }))
     if (this.forceArm?.id === n.id && Date.now() < this.forceArm.until) {
       out.push(ch("\n"), ch("Offline node. Press Enter again to use it anyway.", { fg: theme.yellow }))
     }
@@ -1147,6 +1172,11 @@ export class App {
       if (this.stopped) return
       this.state = s
       this.allNodes = s.nodes
+      const showOs = s.nodes.some((n) => n.os !== "")
+      if (showOs !== this.showOs) {
+        this.showOs = showOs
+        this.cols = computeColumns(this.colsWidth, showOs)
+      }
       this.lastRefresh = Date.now()
       this.lastError = null
       this.requery(false)
@@ -1357,7 +1387,8 @@ export class App {
     if (k === "d" || k === "x" || k === "backspace" || k === "delete") return void this.disconnect()
     if (k === "p" && !shift) return this.pingSelected()
     if (k === "p" && shift) return this.pingAll()
-    if (k === "a") return void this.connectSuggested()
+    if (k === "a" && shift) return void this.connectSuggested()
+    if (k === "a") return void this.toggleAuto()
     if (k === "l") return void this.toggleLan()
     if (k === "r" || k === "f5") return this.manualRefresh()
     if (k === "s" && !shift) return this.nextSort(1)
@@ -1518,19 +1549,41 @@ export class App {
       }
     }
     this.forceArm = null
+    const wasAuto = this.state?.autoExitNode === true
     await this.runAction(`Connecting to ${n.name}`, () => this.backend.setExitNode(n), {
-      onOk: () => this.notify(`Internet traffic now exits via ${n.name}`, "ok"),
+      onOk: () => this.notify(`Internet traffic now exits via ${n.name}${wasAuto ? " (auto exit node off)" : ""}`, "ok"),
     })
   }
 
   private async disconnect(): Promise<void> {
     const cur = this.currentNode()
-    if (!cur && !this.state?.exitNode) {
+    const auto = this.state?.autoExitNode === true
+    if (!cur && !this.state?.exitNode && !auto) {
       this.notify("Not using an exit node", "info")
       return
     }
     await this.runAction("Disconnecting", () => this.backend.setExitNode(null), {
-      onOk: () => this.notify("Exit node disabled, traffic leaves directly", "ok"),
+      onOk: () => this.notify(`Exit node disabled, traffic leaves directly${auto ? " (auto exit node off)" : ""}`, "ok"),
+    })
+  }
+
+  /** Turn Tailscale's automatic exit node selection on, or off while keeping the current node. */
+  private async toggleAuto(): Promise<void> {
+    if (this.state?.autoExitNode) {
+      const cur = this.currentNode()
+      if (cur) {
+        await this.runAction(`Keeping ${cur.name}`, () => this.backend.setExitNode(cur), {
+          onOk: () => this.notify(`Auto exit node off, staying on ${cur.name}`, "ok"),
+        })
+      } else {
+        await this.runAction("Turning auto exit node off", () => this.backend.setExitNode(null), {
+          onOk: () => this.notify("Auto exit node off", "ok"),
+        })
+      }
+      return
+    }
+    await this.runAction("Enabling auto exit node", () => this.backend.setAutoExitNode(), {
+      onOk: () => this.notify("Tailscale now picks and follows the best exit node", "ok"),
     })
   }
 
@@ -1584,43 +1637,65 @@ export class App {
     this.render()
     this.backend
       .ping(n)
-      .then((v) => {
+      .then((res) => {
         if (this.stopped) return
-        this.latency.set(n.id, v)
+        this.latency.set(n.id, res.rtt)
+        this.latencyVia.set(n.id, res.via)
         if (this.query.sort === "latency") this.requery(false)
         this.render()
       })
-      .catch(() => {
+      .catch((e) => {
         if (this.stopped) return
-        this.latency.set(n.id, null)
+        this.latency.delete(n.id)
+        this.latencyVia.delete(n.id)
+        this.notify(errText(e), "error", 6000)
         this.render()
       })
   }
 
   private pingAll(): void {
+    if (this.pingAllRunning) {
+      this.notify("Still pinging", "info")
+      return
+    }
     const targets = this.nodes.filter((n) => n.online && this.latency.get(n.id) !== "pending")
     if (targets.length === 0) {
       this.notify("No online nodes to ping in the current view", "info")
       return
     }
     this.notify(`Pinging ${targets.length} nodes…`, "info", 2500)
+    for (const n of targets) this.latency.set(n.id, "pending")
+    this.pingAllRunning = true
     let i = 0
+    let replied = 0
+    let firstError: string | null = null
     const worker = async () => {
       while (i < targets.length && !this.stopped) {
         const n = targets[i++]!
-        this.latency.set(n.id, "pending")
         try {
-          const v = await this.backend.ping(n)
-          this.latency.set(n.id, v)
-        } catch {
-          this.latency.set(n.id, null)
+          const res = await this.backend.ping(n)
+          this.latency.set(n.id, res.rtt)
+          this.latencyVia.set(n.id, res.via)
+          if (res.rtt !== null) replied++
+        } catch (e) {
+          this.latency.delete(n.id)
+          this.latencyVia.delete(n.id)
+          firstError ??= errText(e)
         }
         if (this.query.sort === "latency") this.requery(false)
         this.render()
       }
     }
     this.render()
-    for (let w = 0; w < Math.min(6, targets.length); w++) void worker()
+    const workers: Promise<void>[] = []
+    for (let w = 0; w < Math.min(8, targets.length); w++) workers.push(worker())
+    void Promise.all(workers).then(() => {
+      this.pingAllRunning = false
+      if (this.stopped) return
+      this.renderToolbar()
+      if (firstError) this.notify(`${replied} of ${targets.length} replied · ${firstError}`, "warn", 6000)
+      else this.notify(`Pinged ${targets.length} nodes, ${replied} replied`, "ok", 4000)
+    })
   }
 
   private copySelected(): void {
