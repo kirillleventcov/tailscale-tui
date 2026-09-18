@@ -37,9 +37,13 @@ try {
   await waitFor((f) => f.includes("★ "), 60)
   if (ping) {
     setup.mockInput.pressKey("p", { shift: true })
-    // Wait until no row still shows the pending marker (the search placeholder has its own ellipsis).
-    await waitFor((f) => f.split("\n").slice(7, height - 2).every((l) => !l.includes(" … ")), 600)
-    await Bun.sleep(4500) // let the result toast expire
+    // Wait (in real time) for the summary toast, then let it expire.
+    const finished = (f: string) => /Pinged \d+ nodes|of \d+ replied/.test(f)
+    for (let i = 0; i < 600 && !finished(setup.captureCharFrame()); i++) {
+      await Bun.sleep(500)
+      await settle(1)
+    }
+    await Bun.sleep(6500)
   }
   await settle()
   process.stdout.write(setup.captureCharFrame())

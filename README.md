@@ -8,31 +8,31 @@ Built with [OpenTUI](https://opentui.com) on [Bun](https://bun.sh). It only driv
  ◉ CONNECTED via fi-hel-wg-203 auto 100.74.4.51 · Helsinki, FI · direct 185.65.133.165:51820 · ↓ 101 MB ↑ 11 MB
  tsexit v0.1.0 · tailnet leventcovkk@gmail.com · device k-pc · LAN access on · 533 exit nodes (533 online) · updated…
  ╭────────────────────────────────╮
- │ ⌕ search name, IP, country, ci │  All   Online   Tailnet   Mullvad   Status ▴   ★ Auto on   LAN on   Pinging…   ?
+ │ ⌕ search name, IP, country, ci │  All   Online   Tailnet   Mullvad   Status ▴   ★ Auto on   LAN on   Ping all   ?
  ╰────────────────────────────────╯
  ╭─ Exit nodes · 533 ────────────────────────────────────────────────╮ ╭─ Details ──────────────────────────────────╮
  │    Node                Status ▴ Location            Latency  Prio │ │ fi-hel-wg-203                              │
- │▸◉★ fi-hel-wg-203       ACTIVE   FI Helsinki          1.8 ms   500▀│ │ fi-hel-wg-203.mullvad.ts.net               │
- │ ●  al-tia-wg-001       online   AL Tirana             54 ms   100 │ │                                            │
+ │▸◉★ fi-hel-wg-203       ACTIVE   FI Helsinki          1.7 ms   500▀│ │ fi-hel-wg-203.mullvad.ts.net               │
+ │ ●  al-tia-wg-001       online   AL Tirana             53 ms   100 │ │                                            │
  │ ●  al-tia-wg-002       online   AL Tirana             56 ms   100 │ │ Status     ◉ ACTIVE                        │
  │ ●  al-tia-wg-003       online   AL Tirana             54 ms   100 │ │ Address    100.74.4.51                     │
- │ ●  al-tia-wg-004       online   AL Tirana             54 ms   100 │ │            fd7a:115c:a1e0::2801:4c4        │
- │ ●  ar-bue-wg-001       online   AR Buenos Aires      325 ms   100 │ │ Location   Helsinki, Finland (FI)          │
- │ ●  ar-bue-wg-002       online   AR Buenos Aires      325 ms   100 │ │ Type       Mullvad exit node               │
+ │ ●  al-tia-wg-004       online   AL Tirana             55 ms   100 │ │            fd7a:115c:a1e0::2801:4c4        │
+ │ ●  ar-bue-wg-001       online   AR Buenos Aires      315 ms   100 │ │ Location   Helsinki, Finland (FI)          │
+ │ ●  ar-bue-wg-002       online   AR Buenos Aires      315 ms   100 │ │ Type       Mullvad exit node               │
  │ ●  at-vie-wg-001       online   AT Vienna             48 ms   100 │ │ Mode       auto, chosen by Tailscale       │
  │ ●  at-vie-wg-002       online   AT Vienna             46 ms   100 │ │ Owner      tagged-devices                  │
  │ ●  at-vie-wg-003       online   AT Vienna             48 ms   100 │ │ Tags       tag:mullvad-exit-node           │
  │ ●  at-vie-wg-101       online   AT Vienna             41 ms   100 │ │ Priority   500                             │
  │ ●  at-vie-wg-102       online   AT Vienna             41 ms   100 │ │ Last seen  online now                      │
- │ ●  au-adl-wg-301       online   AU Adelaide          342 ms   100 │ │ Handshake  1m ago                          │
- │ ●  au-adl-wg-302       online   AU Adelaide          327 ms   100 │ │ Path       direct 185.65.133.165:51820     │
+ │ ●  au-adl-wg-301       online   AU Adelaide          342 ms   100 │ │ Handshake  24s ago                         │
+ │ ●  au-adl-wg-302       online   AU Adelaide          328 ms   100 │ │ Path       direct 185.65.133.165:51820     │
  │ ●  au-adl-wg-303       online   AU Adelaide          346 ms   100 │ │ Traffic    ↓ 101 MB  ↑ 11 MB               │
- │ ●  au-bne-wg-301       online   AU Brisbane          334 ms   100 │ │ Latency    1.8 ms                          │
+ │ ●  au-bne-wg-301       online   AU Brisbane          335 ms   100 │ │ Latency    1.7 ms                          │
  │ ●  au-bne-wg-302       online   AU Brisbane          325 ms   100 │ │            icmp 185.65.133.165             │
  │ ●  au-bne-wg-303       online   AU Brisbane          317 ms   100 │ │ Suggested  ★ Tailscale's pick now (A)      │
- │ ●  au-mel-wg-401       online   AU Melbourne         421 ms   100 │ │                                            │
- │ ●  au-mel-wg-403       online   AU Melbourne         418 ms   100 │ │                                            │
- │ ●  au-per-wg-301       online   AU Perth             374 ms   100 │ │  Disconnect   Ping   Copy IP               │
+ │ ●  au-mel-wg-401       online   AU Melbourne         407 ms   100 │ │                                            │
+ │ ●  au-mel-wg-403       online   AU Melbourne         405 ms   100 │ │                                            │
+ │ ●  au-per-wg-301       online   AU Perth             376 ms   100 │ │  Disconnect   Ping   Copy IP               │
  ╰───────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────╯
  ↑↓ move  ⏎ connect/disconnect  d disconnect  a auto  p ping  P ping all  / search  f filter  s sort  ? help  q quit
 ```
