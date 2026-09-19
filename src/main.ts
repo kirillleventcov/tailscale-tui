@@ -1,19 +1,19 @@
 #!/usr/bin/env bun
-import { createCliRenderer } from "@opentui/core"
-import pkg from "../package.json" with { type: "json" }
-import { App } from "./app"
-import { TailscaleBackend, findTailscaleBinary } from "./backend/tailscale"
-import { BackendError } from "./backend/types"
-import { theme } from "./theme"
+import { createCliRenderer } from "@opentui/core";
+import pkg from "../package.json" with { type: "json" };
+import { App } from "./app";
+import { TailscaleBackend, findTailscaleBinary } from "./backend/tailscale";
+import { BackendError } from "./backend/types";
+import { theme } from "./theme";
 
 interface Cli {
-  sudo: boolean
-  refresh: number
-  details: boolean
-  mullvadPing: boolean
-  bin?: string
-  help: boolean
-  version: boolean
+  sudo: boolean;
+  refresh: number;
+  details: boolean;
+  mullvadPing: boolean;
+  bin?: string;
+  help: boolean;
+  version: boolean;
 }
 
 function usage(): string {
@@ -37,94 +37,107 @@ Mouse: click to select, double-click to connect, wheel to scroll, click chips.
 
 On Linux, "tailscale set" needs root or an operator user. Run once:
   sudo tailscale set --operator=$USER
-`
+`;
 }
 
 function parseArgs(argv: string[]): Cli {
-  const cli: Cli = { sudo: false, refresh: 5, details: true, mullvadPing: true, help: false, version: false }
+  const cli: Cli = {
+    sudo: false,
+    refresh: 5,
+    details: true,
+    mullvadPing: true,
+    help: false,
+    version: false,
+  };
   for (let i = 0; i < argv.length; i++) {
-    const raw = argv[i]!
-    const eq = raw.indexOf("=")
-    const flag = eq >= 0 ? raw.slice(0, eq) : raw
-    const inline = eq >= 0 ? raw.slice(eq + 1) : undefined
+    const raw = argv[i]!;
+    const eq = raw.indexOf("=");
+    const flag = eq >= 0 ? raw.slice(0, eq) : raw;
+    const inline = eq >= 0 ? raw.slice(eq + 1) : undefined;
     const value = (): string => {
-      if (inline !== undefined) return inline
-      const next = argv[++i]
+      if (inline !== undefined) return inline;
+      const next = argv[++i];
       if (next === undefined) {
-        console.error(`${flag} needs a value`)
-        process.exit(2)
+        console.error(`${flag} needs a value`);
+        process.exit(2);
       }
-      return next
-    }
+      return next;
+    };
     switch (flag) {
       case "--sudo":
-        cli.sudo = true
-        break
+        cli.sudo = true;
+        break;
       case "--bin":
-        cli.bin = value()
-        break
+        cli.bin = value();
+        break;
       case "--refresh": {
-        const n = Number(value())
+        const n = Number(value());
         if (!Number.isFinite(n) || n < 0) {
-          console.error("--refresh must be a non-negative number of seconds")
-          process.exit(2)
+          console.error("--refresh must be a non-negative number of seconds");
+          process.exit(2);
         }
-        cli.refresh = n
-        break
+        cli.refresh = n;
+        break;
       }
       case "--no-details":
-        cli.details = false
-        break
+        cli.details = false;
+        break;
       case "--no-mullvad-ping":
-        cli.mullvadPing = false
-        break
+        cli.mullvadPing = false;
+        break;
       case "-h":
       case "--help":
-        cli.help = true
-        break
+        cli.help = true;
+        break;
       case "-v":
       case "--version":
-        cli.version = true
-        break
+        cli.version = true;
+        break;
       default:
-        console.error(`Unknown option: ${raw}\n`)
-        console.error(usage())
-        process.exit(2)
+        console.error(`Unknown option: ${raw}\n`);
+        console.error(usage());
+        process.exit(2);
     }
   }
-  return cli
+  return cli;
 }
 
 async function main(): Promise<void> {
-  const cli = parseArgs(Bun.argv.slice(2))
+  const cli = parseArgs(Bun.argv.slice(2));
   if (cli.help) {
-    console.log(usage())
-    return
+    console.log(usage());
+    return;
   }
   if (cli.version) {
-    console.log(pkg.version)
-    return
+    console.log(pkg.version);
+    return;
   }
 
-  const bin = cli.bin ?? findTailscaleBinary()
+  const bin = cli.bin ?? findTailscaleBinary();
   if (!bin) {
-    console.error("tailscale CLI not found. Install Tailscale, set TAILSCALE_BIN, or pass --bin <path>.")
-    process.exit(1)
+    console.error(
+      "tailscale CLI not found. Install Tailscale, set TAILSCALE_BIN, or pass --bin <path>.",
+    );
+    process.exit(1);
   }
-  const backend = new TailscaleBackend({ bin, sudo: cli.sudo, mullvadPing: cli.mullvadPing })
+  const backend = new TailscaleBackend({
+    bin,
+    sudo: cli.sudo,
+    mullvadPing: cli.mullvadPing,
+  });
   // Preflight outside the alternate screen so a broken setup prints a readable error.
   try {
-    await backend.status()
+    await backend.status();
   } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e)
-    console.error(`Cannot read Tailscale status: ${msg}`)
-    if (e instanceof BackendError && e.hint) console.error(e.hint)
-    process.exit(1)
+    const msg = e instanceof Error ? e.message : String(e);
+    console.error(`Cannot read Tailscale status: ${msg}`);
+    if (e instanceof BackendError && e.hint) console.error(e.hint);
+    process.exit(1);
   }
 
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
-    console.error("tsexit needs an interactive terminal.")
-    process.exit(1)
+    console.error("tsexit needs an interactive terminal.");
+    process.exit(1);
   }
 
   const renderer = await createCliRenderer({
@@ -133,27 +146,27 @@ async function main(): Promise<void> {
     backgroundColor: theme.bg,
     useMouse: true,
     enableMouseMovement: true,
-  })
+  });
 
-  let app: App | undefined
+  let app: App | undefined;
   try {
     app = new App(renderer, {
       backend,
       refreshMs: cli.refresh * 1000,
       showDetails: cli.details,
       version: pkg.version,
-    })
-    await app.start()
-    await app.done
+    });
+    await app.start();
+    await app.done;
   } catch (e) {
-    app?.stop()
-    renderer.destroy()
-    console.error(e)
-    process.exit(1)
+    app?.stop();
+    renderer.destroy();
+    console.error(e);
+    process.exit(1);
   }
-  app.stop()
-  renderer.destroy()
-  process.exit(0)
+  app.stop();
+  renderer.destroy();
+  process.exit(0);
 }
 
-await main()
+await main();

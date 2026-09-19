@@ -5,41 +5,38 @@ A single-screen terminal UI for Tailscale exit nodes. See every exit node in you
 Built with [OpenTUI](https://opentui.com) on [Bun](https://bun.sh). It only drives the official `tailscale` CLI, so it does exactly what the commands you would type do.
 
 ```text
- ◉ CONNECTED via fi-hel-wg-203 auto 100.74.4.51 · Helsinki, FI · direct 185.65.133.165:51820 · ↓ 101 MB ↑ 11 MB
- tsexit v0.1.0 · tailnet leventcovkk@gmail.com · device k-pc · LAN access on · 533 exit nodes (533 online) · updated…
  ╭────────────────────────────────╮
  │ ⌕ search name, IP, country, ci │  All   Online   Tailnet   Mullvad   Status ▴   ★ Auto on   LAN on   Ping all   ?
  ╰────────────────────────────────╯
  ╭─ Exit nodes · 533 ────────────────────────────────────────────────╮ ╭─ Details ──────────────────────────────────╮
  │    Node                Status ▴ Location            Latency  Prio │ │ fi-hel-wg-203                              │
- │▸◉★ fi-hel-wg-203       ACTIVE   FI Helsinki          1.7 ms   500▀│ │ fi-hel-wg-203.mullvad.ts.net               │
+ │▸◉★ fi-hel-wg-203       ACTIVE   FI Helsinki          1.8 ms   500▀│ │ fi-hel-wg-203.mullvad.ts.net               │
  │ ●  al-tia-wg-001       online   AL Tirana             53 ms   100 │ │                                            │
- │ ●  al-tia-wg-002       online   AL Tirana             56 ms   100 │ │ Status     ◉ ACTIVE                        │
- │ ●  al-tia-wg-003       online   AL Tirana             54 ms   100 │ │ Address    100.74.4.51                     │
- │ ●  al-tia-wg-004       online   AL Tirana             55 ms   100 │ │            fd7a:115c:a1e0::2801:4c4        │
- │ ●  ar-bue-wg-001       online   AR Buenos Aires      315 ms   100 │ │ Location   Helsinki, Finland (FI)          │
- │ ●  ar-bue-wg-002       online   AR Buenos Aires      315 ms   100 │ │ Type       Mullvad exit node               │
+ │ ●  al-tia-wg-002       online   AL Tirana             55 ms   100 │ │ Status     ◉ ACTIVE                        │
+ │ ●  al-tia-wg-003       online   AL Tirana             53 ms   100 │ │ Address    100.74.4.51                     │
+ │ ●  al-tia-wg-004       online   AL Tirana           timeout   100 │ │            fd7a:115c:a1e0::2801:4c4        │
+ │ ●  ar-bue-wg-001       online   AR Buenos Aires      249 ms   100 │ │ Location   Helsinki, Finland (FI)          │
+ │ ●  ar-bue-wg-002       online   AR Buenos Aires      260 ms   100 │ │ Type       Mullvad exit node               │
  │ ●  at-vie-wg-001       online   AT Vienna             48 ms   100 │ │ Mode       auto, chosen by Tailscale       │
  │ ●  at-vie-wg-002       online   AT Vienna             46 ms   100 │ │ Owner      tagged-devices                  │
  │ ●  at-vie-wg-003       online   AT Vienna             48 ms   100 │ │ Tags       tag:mullvad-exit-node           │
  │ ●  at-vie-wg-101       online   AT Vienna             41 ms   100 │ │ Priority   500                             │
  │ ●  at-vie-wg-102       online   AT Vienna             41 ms   100 │ │ Last seen  online now                      │
- │ ●  au-adl-wg-301       online   AU Adelaide          342 ms   100 │ │ Handshake  24s ago                         │
- │ ●  au-adl-wg-302       online   AU Adelaide          328 ms   100 │ │ Path       direct 185.65.133.165:51820     │
- │ ●  au-adl-wg-303       online   AU Adelaide          346 ms   100 │ │ Traffic    ↓ 101 MB  ↑ 11 MB               │
- │ ●  au-bne-wg-301       online   AU Brisbane          335 ms   100 │ │ Latency    1.7 ms                          │
- │ ●  au-bne-wg-302       online   AU Brisbane          325 ms   100 │ │            icmp 185.65.133.165             │
- │ ●  au-bne-wg-303       online   AU Brisbane          317 ms   100 │ │ Suggested  ★ Tailscale's pick now (A)      │
- │ ●  au-mel-wg-401       online   AU Melbourne         407 ms   100 │ │                                            │
- │ ●  au-mel-wg-403       online   AU Melbourne         405 ms   100 │ │                                            │
- │ ●  au-per-wg-301       online   AU Perth             376 ms   100 │ │  Disconnect   Ping   Copy IP               │
+ │ ●  au-adl-wg-301       online   AU Adelaide          435 ms   100 │ │ Handshake  1m ago                          │
+ │ ●  au-adl-wg-302       online   AU Adelaide          433 ms   100 │ │ Path       direct 185.65.133.165:51820     │
+ │ ●  au-adl-wg-303       online   AU Adelaide          396 ms   100 │ │ Traffic    ↓ 519 MB  ↑ 21 MB               │
+ │ ●  au-bne-wg-301       online   AU Brisbane          394 ms   100 │ │ Latency    1.8 ms                          │
+ │ ●  au-bne-wg-302       online   AU Brisbane          391 ms   100 │ │            icmp 185.65.133.165             │
+ │ ●  au-bne-wg-303       online   AU Brisbane          320 ms   100 │ │ Suggested  ★ Tailscale's pick now (A)      │
+ │ ●  au-mel-wg-401       online   AU Melbourne         318 ms   100 │ │                                            │
+ │ ●  au-mel-wg-403       online   AU Melbourne         323 ms   100 │ │                                            │
+ │ ●  au-per-wg-301       online   AU Perth             371 ms   100 │ │  Disconnect   Ping   Copy IP               │
  ╰───────────────────────────────────────────────────────────────────╯ ╰────────────────────────────────────────────╯
- ↑↓ move  ⏎ connect/disconnect  d disconnect  a auto  p ping  P ping all  / search  f filter  s sort  ? help  q quit
 ```
 
 ## Features
 
-- One screen: connection status, search and filters, the node list, a details panel, key hints.
+- One screen: search and filters, the node list, a details panel. No status bars; every key and mouse gesture is listed under `?`, and the tailnet summary lives there too.
 - Connect, disconnect and switch exit nodes with Enter, a double-click, or the Connect button.
 - Auto exit node: `a` turns Tailscale's automatic selection on (`--exit-node=auto:any`); Tailscale then picks the best node and follows it. Picking a node yourself turns it off again, as it does on the CLI.
 - Search across name, IP, country, city, OS, owner and tags. Space-separated terms must all match; `!term` excludes.
@@ -47,7 +44,7 @@ Built with [OpenTUI](https://opentui.com) on [Bun](https://bun.sh). It only driv
 - Latency: ping one node (`p`), every visible node (`P` or the Ping all chip), or right-click a row. Your own devices are measured with `tailscale ping`; Mullvad nodes with ICMP to the relay's public address (see below). Results feed the latency sort.
 - Tailscale's suggested exit node is starred; `A` (or the details line) connects to it once.
 - LAN access toggle, traffic counters, connection path (direct, peer relay or DERP), last seen, key expiry, owner, tags.
-- Auto-refresh (5 s by default), busy spinner, toasts for results and errors with actionable hints.
+- Auto-refresh (5 s by default), a busy spinner in the list title, toasts for results, errors and Tailscale health warnings with actionable hints.
 - Responsive layout: the details panel hides below 100 columns, chrome shrinks below 22 rows, the OS column disappears when no node reports one (Mullvad-only tailnets), every mouse control has a key.
 
 ## Requirements
@@ -100,65 +97,65 @@ Alternatively start with `--sudo`, which runs `sudo -n tailscale set ...` and th
 
 ## Keyboard
 
-| Keys | Action |
-| --- | --- |
-| `↑` `↓` `j` `k` | Move selection |
-| `PgUp` `PgDn` `Ctrl-U` `Ctrl-D` | Page |
-| `Home` `End` `g` `G` | First / last node |
-| `Enter` | Connect to the selected node, or disconnect if it is active |
-| `d` `x` `Backspace` | Disconnect (stop using an exit node; also turns auto mode off) |
-| `a` | Auto exit node on / off. Turning it off keeps the node Tailscale chose |
-| `A` | Connect to Tailscale's suggested exit node once |
-| `p` / `P` | Ping selected node / ping all visible online nodes |
-| `/` `Tab` `Ctrl-F` | Focus the search box |
-| `Enter` / `Esc` (in search) | Apply and go back / clear and go back |
-| `f` / `F` | Next / previous filter |
-| `1` `2` `3` `4` | All / Online / Tailnet / Mullvad |
-| `s` / `S` | Next sort field / reverse direction |
-| `l` | Toggle LAN access while using an exit node |
-| `y` `c` | Copy the node's Tailscale IP (OSC 52 clipboard) |
-| `i` | Show or hide the details panel |
-| `r` `F5` | Refresh now |
-| `?` `F1` | Help overlay |
-| `Esc` | Clear search, dismiss toast, close help |
-| `q` `Ctrl-C` | Quit |
+| Keys                            | Action                                                                       |
+| ------------------------------- | ---------------------------------------------------------------------------- |
+| `↑` `↓` `j` `k`                 | Move selection                                                               |
+| `PgUp` `PgDn` `Ctrl-U` `Ctrl-D` | Page                                                                         |
+| `Home` `End` `g` `G`            | First / last node                                                            |
+| `Enter`                         | Connect to the selected node, or disconnect if it is active                  |
+| `d` `x` `Backspace`             | Disconnect (stop using an exit node; also turns auto mode off)               |
+| `a`                             | Auto exit node on / off. Turning it off keeps the node Tailscale chose       |
+| `A`                             | Connect to Tailscale's suggested exit node once                              |
+| `p` / `P`                       | Ping selected node / ping all visible online nodes                           |
+| `/` `Tab` `Ctrl-F`              | Focus the search box                                                         |
+| `Enter` / `Esc` (in search)     | Apply and go back / clear and go back                                        |
+| `f` / `F`                       | Next / previous filter                                                       |
+| `1` `2` `3` `4`                 | All / Online / Tailnet / Mullvad                                             |
+| `s` / `S`                       | Next sort field / reverse direction                                          |
+| `l`                             | Toggle LAN access while using an exit node                                   |
+| `y` `c`                         | Copy the node's Tailscale IP (OSC 52 clipboard)                              |
+| `i`                             | Show or hide the details panel                                               |
+| `r` `F5`                        | Refresh now                                                                  |
+| `?` `F1`                        | Help overlay: every key, mouse gesture, version, backend, tailnet and device |
+| `Esc`                           | Clear search, dismiss toast, close help                                      |
+| `q` `Ctrl-C`                    | Quit                                                                         |
 
 Connecting to an offline node asks for a second `Enter` within 4 seconds. Nodes with an expired key cannot be selected.
 
 ## Mouse
 
-| Gesture | Action |
-| --- | --- |
-| Click a row | Select |
-| Double-click a row | Connect (or disconnect if active) |
-| Right-click a row | Ping it |
-| Middle-click a row | Copy its IP |
-| Wheel over the list | Scroll |
-| Drag the scrollbar | Scroll |
-| Click a column header | Sort by that column; click again to reverse |
-| Click the search box | Type to filter |
-| Click `All` `Online` `Tailnet` `Mullvad` | Filter |
-| Click the sort chip | Next sort field (Shift-click reverses) |
-| Click `★ Auto on/off` | Toggle Tailscale's automatic exit node |
-| Click `LAN on/off` | Toggle LAN access |
-| Click `Ping all` | Ping every visible online node (same as `P`) |
-| Click `?` | Help |
-| `Connect` `Ping` `Copy IP` buttons | Act on the selected node |
+| Gesture                                  | Action                                       |
+| ---------------------------------------- | -------------------------------------------- |
+| Click a row                              | Select                                       |
+| Double-click a row                       | Connect (or disconnect if active)            |
+| Right-click a row                        | Ping it                                      |
+| Middle-click a row                       | Copy its IP                                  |
+| Wheel over the list                      | Scroll                                       |
+| Drag the scrollbar                       | Scroll                                       |
+| Click a column header                    | Sort by that column; click again to reverse  |
+| Click the search box                     | Type to filter                               |
+| Click `All` `Online` `Tailnet` `Mullvad` | Filter                                       |
+| Click the sort chip                      | Next sort field (Shift-click reverses)       |
+| Click `★ Auto on/off`                    | Toggle Tailscale's automatic exit node       |
+| Click `LAN on/off`                       | Toggle LAN access                            |
+| Click `Ping all`                         | Ping every visible online node (same as `P`) |
+| Click `?`                                | Help overlay                                 |
+| `Connect` `Ping` `Copy IP` buttons       | Act on the selected node                     |
 
 Mouse support needs a terminal that reports mouse events, which is nearly all of them (xterm-compatible, kitty, WezTerm, Alacritty, iTerm2, Windows Terminal, tmux with `set -g mouse on`).
 
 ## How it works
 
-| Purpose | Command |
-| --- | --- |
-| Node list, current exit node, self, tailnet, health | `tailscale status --json` |
-| LAN access and auto exit node preferences | `tailscale debug prefs` |
-| Suggested node | `tailscale exit-node suggest` |
-| Connect / disconnect | `tailscale set --exit-node=<ip>` / `tailscale set --exit-node=` |
-| Auto exit node | `tailscale set --exit-node=auto:any` |
-| LAN access | `tailscale set --exit-node-allow-lan-access=<bool>` |
-| Latency, own devices | `tailscale ping -c 1 --timeout 3s <ip>` |
-| Latency, Mullvad nodes | `ping -c 1 <relay public IP>` |
+| Purpose                                             | Command                                                         |
+| --------------------------------------------------- | --------------------------------------------------------------- |
+| Node list, current exit node, self, tailnet, health | `tailscale status --json`                                       |
+| LAN access and auto exit node preferences           | `tailscale debug prefs`                                         |
+| Suggested node                                      | `tailscale exit-node suggest`                                   |
+| Connect / disconnect                                | `tailscale set --exit-node=<ip>` / `tailscale set --exit-node=` |
+| Auto exit node                                      | `tailscale set --exit-node=auto:any`                            |
+| LAN access                                          | `tailscale set --exit-node-allow-lan-access=<bool>`             |
+| Latency, own devices                                | `tailscale ping -c 1 --timeout 3s <ip>`                         |
+| Latency, Mullvad nodes                              | `ping -c 1 <relay public IP>`                                   |
 
 Only peers that advertise an approved exit node are listed. Mullvad nodes are recognised by their `tag:mullvad-exit-node` tag and shown with the country and city from the status output.
 

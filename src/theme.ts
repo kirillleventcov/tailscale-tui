@@ -38,4 +38,4 @@ export const theme = {
   toastErrorBg: "#7a1f1f",
 
   scrim: "#0d1117b0",
-} as const
+} as const;

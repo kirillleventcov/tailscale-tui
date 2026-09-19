@@ -1,10 +1,15 @@
-import { existsSync } from "node:fs"
-import { parseTime } from "../format"
-import type { ExitNode, ExitNodeStatus, SelfInfo, TailscaleState } from "../model"
-import { run, type RunResult } from "./exec"
-import { icmpPing } from "./icmp"
-import { MullvadRelays } from "./mullvad"
-import { BackendError, type Backend, type PingResult } from "./types"
+import { existsSync } from "node:fs";
+import { parseTime } from "../format";
+import type {
+  ExitNode,
+  ExitNodeStatus,
+  SelfInfo,
+  TailscaleState,
+} from "../model";
+import { run, type RunResult } from "./exec";
+import { icmpPing } from "./icmp";
+import { MullvadRelays } from "./mullvad";
+import { BackendError, type Backend, type PingResult } from "./types";
 
 const KNOWN_PATHS = [
   "/usr/bin/tailscale",
@@ -12,117 +17,147 @@ const KNOWN_PATHS = [
   "/opt/homebrew/bin/tailscale",
   "/Applications/Tailscale.app/Contents/MacOS/Tailscale",
   "C:\\Program Files\\Tailscale\\tailscale.exe",
-]
+];
 
 /** Locate the `tailscale` CLI: $TAILSCALE_BIN, then PATH, then well-known install paths. */
 export function findTailscaleBinary(): string | null {
-  const fromEnv = process.env.TAILSCALE_BIN
-  if (fromEnv) return fromEnv
-  const onPath = Bun.which("tailscale")
-  if (onPath) return onPath
+  const fromEnv = process.env.TAILSCALE_BIN;
+  if (fromEnv) return fromEnv;
+  const onPath = Bun.which("tailscale");
+  if (onPath) return onPath;
   for (const p of KNOWN_PATHS) {
     try {
-      if (existsSync(p)) return p
+      if (existsSync(p)) return p;
     } catch {
       // ignore
     }
   }
-  return null
+  return null;
 }
 
 export interface TailscaleBackendOptions {
-  bin: string
+  bin: string;
   /** Prefix privileged commands (`tailscale set ...`) with `sudo -n`. */
-  sudo?: boolean
-  timeoutMs?: number
+  sudo?: boolean;
+  timeoutMs?: number;
   /** Measure Mullvad nodes with ICMP to their relay's public address (needs api.mullvad.net). Default true. */
-  mullvadPing?: boolean
+  mullvadPing?: boolean;
 }
 
-const PING_TIMEOUT_SEC = 3
+const PING_TIMEOUT_SEC = 3;
 
 export class TailscaleBackend implements Backend {
-  readonly label: string
-  private readonly bin: string
-  private readonly sudo: boolean
-  private readonly timeoutMs: number
-  private readonly relays: MullvadRelays | null
+  readonly label: string;
+  private readonly bin: string;
+  private readonly sudo: boolean;
+  private readonly timeoutMs: number;
+  private readonly relays: MullvadRelays | null;
 
   constructor(opts: TailscaleBackendOptions) {
-    this.bin = opts.bin
-    this.sudo = opts.sudo ?? false
-    this.timeoutMs = opts.timeoutMs ?? 10_000
-    this.relays = opts.mullvadPing === false ? null : new MullvadRelays()
-    this.label = this.sudo ? "tailscale (sudo)" : "tailscale"
+    this.bin = opts.bin;
+    this.sudo = opts.sudo ?? false;
+    this.timeoutMs = opts.timeoutMs ?? 10_000;
+    this.relays = opts.mullvadPing === false ? null : new MullvadRelays();
+    this.label = this.sudo ? "tailscale (sudo)" : "tailscale";
   }
 
-  private run(args: string[], opts: { privileged?: boolean; timeoutMs?: number } = {}): Promise<RunResult> {
-    const usesSudo = opts.privileged === true && this.sudo && process.platform !== "win32"
-    const cmd = usesSudo ? ["sudo", "-n", this.bin, ...args] : [this.bin, ...args]
-    return run(cmd, opts.timeoutMs ?? this.timeoutMs)
+  private run(
+    args: string[],
+    opts: { privileged?: boolean; timeoutMs?: number } = {},
+  ): Promise<RunResult> {
+    const usesSudo =
+      opts.privileged === true && this.sudo && process.platform !== "win32";
+    const cmd = usesSudo
+      ? ["sudo", "-n", this.bin, ...args]
+      : [this.bin, ...args];
+    return run(cmd, opts.timeoutMs ?? this.timeoutMs);
   }
 
   private toError(res: RunResult, what: string): BackendError {
-    if (res.timedOut) return new BackendError(`${what}: timed out`)
-    const text = (res.stderr.trim() || res.stdout.trim() || `exit code ${res.code}`).split("\n").pop() ?? ""
-    const lower = text.toLowerCase()
-    if (lower.includes("access denied") || lower.includes("permission denied") || lower.includes("operation not permitted")) {
+    if (res.timedOut) return new BackendError(`${what}: timed out`);
+    const text =
+      (res.stderr.trim() || res.stdout.trim() || `exit code ${res.code}`)
+        .split("\n")
+        .pop() ?? "";
+    const lower = text.toLowerCase();
+    if (
+      lower.includes("access denied") ||
+      lower.includes("permission denied") ||
+      lower.includes("operation not permitted")
+    ) {
       return new BackendError(
         `${what}: access denied`,
         "Run once: sudo tailscale set --operator=$USER   (or start tsexit with --sudo)",
-      )
+      );
     }
     if (lower.includes("sudo") && lower.includes("password")) {
-      return new BackendError(`${what}: sudo needs a password`, "Use passwordless sudo, or: sudo tailscale set --operator=$USER")
+      return new BackendError(
+        `${what}: sudo needs a password`,
+        "Use passwordless sudo, or: sudo tailscale set --operator=$USER",
+      );
     }
-    if (lower.includes("failed to connect to local tailscaled") || lower.includes("is tailscale running")) {
-      return new BackendError(`${what}: tailscaled is not running`, "Start it with: sudo systemctl start tailscaled")
+    if (
+      lower.includes("failed to connect to local tailscaled") ||
+      lower.includes("is tailscale running")
+    ) {
+      return new BackendError(
+        `${what}: tailscaled is not running`,
+        "Start it with: sudo systemctl start tailscaled",
+      );
     }
-    return new BackendError(`${what}: ${text}`)
+    return new BackendError(`${what}: ${text}`);
   }
 
   async status(): Promise<TailscaleState> {
-    const res = await this.run(["status", "--json"])
-    let json: unknown
+    const res = await this.run(["status", "--json"]);
+    let json: unknown;
     try {
-      json = JSON.parse(res.stdout)
+      json = JSON.parse(res.stdout);
     } catch {
-      throw this.toError(res, "tailscale status")
+      throw this.toError(res, "tailscale status");
     }
-    const prefs = await this.prefs()
-    return parseStatus(json, prefs)
+    const prefs = await this.prefs();
+    return parseStatus(json, prefs);
   }
 
   /** `tailscale debug prefs` exposes ExitNodeAllowLANAccess and AutoExitNode; best effort. */
   private async prefs(): Promise<unknown> {
     try {
-      const res = await this.run(["debug", "prefs"], { timeoutMs: 4000 })
-      if (res.code !== 0) return null
-      return JSON.parse(res.stdout)
+      const res = await this.run(["debug", "prefs"], { timeoutMs: 4000 });
+      if (res.code !== 0) return null;
+      return JSON.parse(res.stdout);
     } catch {
-      return null
+      return null;
     }
   }
 
   async suggest(): Promise<string | null> {
-    const res = await this.run(["exit-node", "suggest"], { timeoutMs: 15_000 })
-    return parseSuggest(`${res.stdout}\n${res.stderr}`)
+    const res = await this.run(["exit-node", "suggest"], { timeoutMs: 15_000 });
+    return parseSuggest(`${res.stdout}\n${res.stderr}`);
   }
 
   async setExitNode(node: ExitNode | null): Promise<void> {
-    const target = node ? node.ip || node.dnsName || node.hostName : ""
-    const res = await this.run(["set", `--exit-node=${target}`], { privileged: true })
-    if (res.code !== 0) throw this.toError(res, node ? `connect to ${node.name}` : "disconnect")
+    const target = node ? node.ip || node.dnsName || node.hostName : "";
+    const res = await this.run(["set", `--exit-node=${target}`], {
+      privileged: true,
+    });
+    if (res.code !== 0)
+      throw this.toError(res, node ? `connect to ${node.name}` : "disconnect");
   }
 
   async setAutoExitNode(): Promise<void> {
-    const res = await this.run(["set", "--exit-node=auto:any"], { privileged: true })
-    if (res.code !== 0) throw this.toError(res, "auto exit node")
+    const res = await this.run(["set", "--exit-node=auto:any"], {
+      privileged: true,
+    });
+    if (res.code !== 0) throw this.toError(res, "auto exit node");
   }
 
   async setAllowLan(allow: boolean): Promise<void> {
-    const res = await this.run(["set", `--exit-node-allow-lan-access=${allow ? "true" : "false"}`], { privileged: true })
-    if (res.code !== 0) throw this.toError(res, "LAN access")
+    const res = await this.run(
+      ["set", `--exit-node-allow-lan-access=${allow ? "true" : "false"}`],
+      { privileged: true },
+    );
+    if (res.code !== 0) throw this.toError(res, "LAN access");
   }
 
   async ping(node: ExitNode): Promise<PingResult> {
@@ -131,20 +166,24 @@ export class TailscaleBackend implements Backend {
         throw new BackendError(
           "Mullvad nodes do not answer Tailscale pings",
           "Start without --no-mullvad-ping to measure them via their relay's public address",
-        )
+        );
       }
-      const ip = await this.relays.lookup(node.hostName || node.name)
-      return icmpPing(ip, PING_TIMEOUT_SEC)
+      const ip = await this.relays.lookup(node.hostName || node.name);
+      return icmpPing(ip, PING_TIMEOUT_SEC);
     }
-    const target = node.ip || node.dnsName
-    const res = await this.run(["ping", "-c", "1", "--timeout", `${PING_TIMEOUT_SEC}s`, target], {
-      timeoutMs: PING_TIMEOUT_SEC * 1000 + 3000,
-    })
-    const out = `${res.stdout}\n${res.stderr}`
-    const pong = parsePong(out)
-    if (pong) return pong
-    if (res.timedOut || /timed out|no reply/i.test(out)) return { rtt: null, via: "tailscale ping" }
-    throw this.toError(res, `ping ${node.name}`)
+    const target = node.ip || node.dnsName;
+    const res = await this.run(
+      ["ping", "-c", "1", "--timeout", `${PING_TIMEOUT_SEC}s`, target],
+      {
+        timeoutMs: PING_TIMEOUT_SEC * 1000 + 3000,
+      },
+    );
+    const out = `${res.stdout}\n${res.stderr}`;
+    const pong = parsePong(out);
+    if (pong) return pong;
+    if (res.timedOut || /timed out|no reply/i.test(out))
+      return { rtt: null, via: "tailscale ping" };
+    throw this.toError(res, `ping ${node.name}`);
   }
 }
 
@@ -152,53 +191,63 @@ export class TailscaleBackend implements Backend {
 // Parsing (exported for tests)
 // ---------------------------------------------------------------------------
 
-type Obj = Record<string, unknown>
+type Obj = Record<string, unknown>;
 
 function isObj(v: unknown): v is Obj {
-  return typeof v === "object" && v !== null && !Array.isArray(v)
+  return typeof v === "object" && v !== null && !Array.isArray(v);
 }
 
 /** Read a field tolerating both Go-style (`HostName`) and lowerCamel (`hostName`) keys. */
 function g(o: unknown, key: string): unknown {
-  if (!isObj(o)) return undefined
-  if (key in o) return o[key]
-  const lower = key.charAt(0).toLowerCase() + key.slice(1)
-  return o[lower]
+  if (!isObj(o)) return undefined;
+  if (key in o) return o[key];
+  const lower = key.charAt(0).toLowerCase() + key.slice(1);
+  return o[lower];
 }
 
 function str(v: unknown, fallback = ""): string {
-  return typeof v === "string" ? v : fallback
+  return typeof v === "string" ? v : fallback;
 }
 
 function bool(v: unknown): boolean {
-  return v === true
+  return v === true;
 }
 
 function num(v: unknown): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : 0
+  return typeof v === "number" && Number.isFinite(v) ? v : 0;
 }
 
 function strList(v: unknown): string[] {
-  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : []
+  return Array.isArray(v)
+    ? v.filter((x): x is string => typeof x === "string")
+    : [];
 }
 
 function stripDot(s: string): string {
-  return s.endsWith(".") ? s.slice(0, -1) : s
+  return s.endsWith(".") ? s.slice(0, -1) : s;
 }
 
 function firstV4(ips: string[]): string {
-  return ips.find((ip) => ip.includes(".")) ?? ips[0] ?? ""
+  return ips.find((ip) => ip.includes(".")) ?? ips[0] ?? "";
 }
 
-function parsePeer(key: string, p: unknown, users: Map<string, string>): ExitNode {
-  const ips = strList(g(p, "TailscaleIPs")).map((ip) => ip.replace(/\/\d+$/, ""))
-  const dnsName = stripDot(str(g(p, "DNSName")))
-  const hostName = str(g(p, "HostName"))
-  const tags = strList(g(p, "Tags"))
-  const loc = g(p, "Location")
-  const priority = g(loc, "Priority")
-  const userId = g(p, "UserID")
-  const isMullvad = tags.includes("tag:mullvad-exit-node") || dnsName.endsWith(".mullvad.ts.net")
+function parsePeer(
+  key: string,
+  p: unknown,
+  users: Map<string, string>,
+): ExitNode {
+  const ips = strList(g(p, "TailscaleIPs")).map((ip) =>
+    ip.replace(/\/\d+$/, ""),
+  );
+  const dnsName = stripDot(str(g(p, "DNSName")));
+  const hostName = str(g(p, "HostName"));
+  const tags = strList(g(p, "Tags"));
+  const loc = g(p, "Location");
+  const priority = g(loc, "Priority");
+  const userId = g(p, "UserID");
+  const isMullvad =
+    tags.includes("tag:mullvad-exit-node") ||
+    dnsName.endsWith(".mullvad.ts.net");
   return {
     id: str(g(p, "ID"), key),
     key,
@@ -227,30 +276,33 @@ function parsePeer(key: string, p: unknown, users: Map<string, string>): ExitNod
     relay: str(g(p, "Relay")) || undefined,
     curAddr: str(g(p, "CurAddr")) || undefined,
     peerRelay: str(g(p, "PeerRelay")) || undefined,
-  }
+  };
 }
 
-export function parseStatus(json: unknown, prefs: unknown = null): TailscaleState {
-  const users = new Map<string, string>()
-  const userMap = g(json, "User")
+export function parseStatus(
+  json: unknown,
+  prefs: unknown = null,
+): TailscaleState {
+  const users = new Map<string, string>();
+  const userMap = g(json, "User");
   if (isObj(userMap)) {
     for (const [id, u] of Object.entries(userMap)) {
-      const login = str(g(u, "LoginName")) || str(g(u, "DisplayName"))
-      if (login) users.set(id, login)
+      const login = str(g(u, "LoginName")) || str(g(u, "DisplayName"));
+      if (login) users.set(id, login);
     }
   }
 
-  const peers = g(json, "Peer")
-  const nodes: ExitNode[] = []
+  const peers = g(json, "Peer");
+  const nodes: ExitNode[] = [];
   if (isObj(peers)) {
     for (const [key, p] of Object.entries(peers)) {
-      if (!isObj(p)) continue
-      if (!bool(g(p, "ExitNodeOption")) && !bool(g(p, "ExitNode"))) continue
-      nodes.push(parsePeer(key, p, users))
+      if (!isObj(p)) continue;
+      if (!bool(g(p, "ExitNodeOption")) && !bool(g(p, "ExitNode"))) continue;
+      nodes.push(parsePeer(key, p, users));
     }
   }
 
-  const selfRaw = g(json, "Self")
+  const selfRaw = g(json, "Self");
   const self: SelfInfo | null = isObj(selfRaw)
     ? {
         hostName: str(g(selfRaw, "HostName")),
@@ -261,54 +313,64 @@ export function parseStatus(json: unknown, prefs: unknown = null): TailscaleStat
         exitNodeOption: bool(g(selfRaw, "ExitNodeOption")),
         keyExpiry: parseTime(g(selfRaw, "KeyExpiry")),
       }
-    : null
+    : null;
 
-  const ens = g(json, "ExitNodeStatus")
+  const ens = g(json, "ExitNodeStatus");
   const exitNode: ExitNodeStatus | null = isObj(ens)
     ? {
         id: str(g(ens, "ID")),
         online: bool(g(ens, "Online")),
-        ips: strList(g(ens, "TailscaleIPs")).map((ip) => ip.replace(/\/\d+$/, "")),
+        ips: strList(g(ens, "TailscaleIPs")).map((ip) =>
+          ip.replace(/\/\d+$/, ""),
+        ),
       }
-    : null
+    : null;
 
   // ExitNodeStatus is authoritative for "which node is in use"; make the peer flag agree.
   if (exitNode?.id) {
-    for (const n of nodes) n.active = n.active || n.id === exitNode.id
+    for (const n of nodes) n.active = n.active || n.id === exitNode.id;
   }
 
-  const allowLanRaw = g(prefs, "ExitNodeAllowLANAccess")
-  const autoRaw = g(prefs, "AutoExitNode")
-  const tailnet = g(json, "CurrentTailnet")
+  const allowLanRaw = g(prefs, "ExitNodeAllowLANAccess");
+  const autoRaw = g(prefs, "AutoExitNode");
+  const tailnet = g(json, "CurrentTailnet");
 
   return {
     backendState: str(g(json, "BackendState"), "Unknown"),
     version: str(g(json, "Version")),
     self,
     tailnet: str(g(tailnet, "Name")) || null,
-    magicDnsSuffix: str(g(json, "MagicDNSSuffix")) || str(g(tailnet, "MagicDNSSuffix")) || null,
+    magicDnsSuffix:
+      str(g(json, "MagicDNSSuffix")) ||
+      str(g(tailnet, "MagicDNSSuffix")) ||
+      null,
     exitNode,
     allowLan: typeof allowLanRaw === "boolean" ? allowLanRaw : null,
-    autoExitNode: isObj(prefs) ? typeof autoRaw === "string" && autoRaw !== "" : null,
+    autoExitNode: isObj(prefs)
+      ? typeof autoRaw === "string" && autoRaw !== ""
+      : null,
     health: strList(g(json, "Health")),
     nodes,
     fetchedAt: Date.now(),
-  }
+  };
 }
 
 /** "Suggested exit node: de-fra-wg-001.mullvad.ts.net." -> "de-fra-wg-001.mullvad.ts.net" */
 export function parseSuggest(output: string): string | null {
-  const m = /suggested exit node:\s*([^\s,]+)/i.exec(output)
-  if (!m) return null
-  return stripDot(m[1]!)
+  const m = /suggested exit node:\s*([^\s,]+)/i.exec(output);
+  if (!m) return null;
+  return stripDot(m[1]!);
 }
 
 /** "pong from foo (100.64.0.1) via DERP(fra) in 45ms" -> { rtt: 45, via: "via DERP(fra)" } */
 export function parsePong(output: string): PingResult | null {
-  const m = /pong from \S+ \([^)]*\)(?: via (\S+))? in (\d+(?:\.\d+)?)\s*(ms|µs|us|s)\b/i.exec(output)
-  if (!m) return null
-  const v = Number(m[2])
-  const unit = m[3]!.toLowerCase()
-  const rtt = unit === "s" ? v * 1000 : unit === "ms" ? v : v / 1000
-  return { rtt, via: m[1] ? `via ${m[1]}` : "tailscale ping" }
+  const m =
+    /pong from \S+ \([^)]*\)(?: via (\S+))? in (\d+(?:\.\d+)?)\s*(ms|µs|us|s)\b/i.exec(
+      output,
+    );
+  if (!m) return null;
+  const v = Number(m[2]);
+  const unit = m[3]!.toLowerCase();
+  const rtt = unit === "s" ? v * 1000 : unit === "ms" ? v : v / 1000;
+  return { rtt, via: m[1] ? `via ${m[1]}` : "tailscale ping" };
 }

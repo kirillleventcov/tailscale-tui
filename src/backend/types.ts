@@ -1,34 +1,34 @@
-import type { ExitNode, TailscaleState } from "../model"
+import type { ExitNode, TailscaleState } from "../model";
 
 export interface PingResult {
   /** Round-trip time in milliseconds, or null when there was no reply. */
-  rtt: number | null
+  rtt: number | null;
   /** How the measurement was taken, e.g. "tailscale ping via 192.168.0.5:41641" or "icmp 185.65.133.165". */
-  via: string
+  via: string;
 }
 
 export interface Backend {
   /** Short label shown in the help overlay, e.g. "tailscale" or "tailscale (sudo)". */
-  readonly label: string
+  readonly label: string;
   /** Full status snapshot: self, exit-node capable peers, current exit node, prefs. */
-  status(): Promise<TailscaleState>
+  status(): Promise<TailscaleState>;
   /** DNS name of the exit node Tailscale suggests, or null when there is none. */
-  suggest(): Promise<string | null>
+  suggest(): Promise<string | null>;
   /** Route traffic through `node`, or stop using an exit node when `null`. Either turns auto mode off. */
-  setExitNode(node: ExitNode | null): Promise<void>
+  setExitNode(node: ExitNode | null): Promise<void>;
   /** Let Tailscale pick and follow the best exit node (`--exit-node=auto:any`). */
-  setAutoExitNode(): Promise<void>
+  setAutoExitNode(): Promise<void>;
   /** Toggle direct LAN access while an exit node is in use. */
-  setAllowLan(allow: boolean): Promise<void>
+  setAllowLan(allow: boolean): Promise<void>;
   /** Measure the round-trip time to a node. Rejects when the measurement cannot be attempted. */
-  ping(node: ExitNode): Promise<PingResult>
+  ping(node: ExitNode): Promise<PingResult>;
 }
 
 export class BackendError extends Error {
-  hint?: string
+  hint?: string;
   constructor(message: string, hint?: string) {
-    super(message)
-    this.name = "BackendError"
-    this.hint = hint
+    super(message);
+    this.name = "BackendError";
+    this.hint = hint;
   }
 }
