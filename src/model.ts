@@ -1,6 +1,7 @@
-import { osLabel } from "./format";
+import { osLabel, relTime } from "./format";
 
-export interface ExitNode {
+/** A device in the tailnet: one entry of the `Peer` map of `tailscale status --json`. */
+export interface Peer {
   /** Stable node id (tailcfg.StableNodeID). */
   id: string;
   /** Node public key (map key in `tailscale status --json`). */
@@ -38,9 +39,25 @@ export interface ExitNode {
   curAddr?: string;
   /** Peer relay in use (Tailscale peer relays), when any. */
   peerRelay?: string;
+  /** A WireGuard session with the peer is up (the "active" of `tailscale status`). */
+  inSession: boolean;
+  /** Runs Tailscale SSH (it publishes SSH host keys). */
+  ssh: boolean;
+  /** Taildrop can send files to it right now. */
+  taildrop: boolean;
+  /** Shared into this tailnet from another one. */
+  shared: boolean;
+  /** Subnet routes it serves to this device (exit routes excluded). */
+  routes: string[];
+  created?: Date;
 }
 
+/** Exit nodes are peers that advertise an approved exit route. */
+export type ExitNode = Peer;
+
 export interface SelfInfo {
+  id: string;
+  name: string;
   hostName: string;
   dnsName: string;
   ips: string[];
@@ -49,6 +66,11 @@ export interface SelfInfo {
   /** This device advertises an exit node itself. */
   exitNodeOption: boolean;
   keyExpiry?: Date;
+  /** Home DERP region code, e.g. "fra". */
+  relay?: string;
+  /** Public and LAN endpoints this device is reachable on. */
+  endpoints: string[];
+  created?: Date;
 }
 
 export interface ExitNodeStatus {
@@ -61,15 +83,25 @@ export interface TailscaleState {
   backendState: string;
   version: string;
   self: SelfInfo | null;
+  /** Login name and display name of the account this device is logged in with. */
+  user: { login: string; name: string } | null;
   tailnet: string | null;
   magicDnsSuffix: string | null;
+  magicDns: boolean | null;
+  /** Login URL while the backend waits for authentication. */
+  authUrl: string;
   exitNode: ExitNodeStatus | null;
   /** `null` when the preference could not be read. */
   allowLan: boolean | null;
   /** Tailscale picks and follows the best exit node (`--exit-node=auto:any`); `null` when unknown. */
   autoExitNode: boolean | null;
   health: string[];
+  /** Newer client version, when Tailscale reports that one is available. */
+  update: string | null;
+  /** Exit-node capable peers. */
   nodes: ExitNode[];
+  /** Every peer, exit nodes included. */
+  peers: Peer[];
   fetchedAt: number;
 }
 
@@ -81,15 +113,14 @@ export type FilterKind = "all" | "online" | "tailnet" | "mullvad";
 export interface FilterDef {
   id: FilterKind;
   label: string;
-  hotkey: string;
   test: (n: ExitNode) => boolean;
 }
 
 export const FILTERS: readonly FilterDef[] = [
-  { id: "all", label: "All", hotkey: "1", test: () => true },
-  { id: "online", label: "Online", hotkey: "2", test: (n) => n.online },
-  { id: "tailnet", label: "Tailnet", hotkey: "3", test: (n) => !n.isMullvad },
-  { id: "mullvad", label: "Mullvad", hotkey: "4", test: (n) => n.isMullvad },
+  { id: "all", label: "All", test: () => true },
+  { id: "online", label: "Online", test: (n) => n.online },
+  { id: "tailnet", label: "Tailnet", test: (n) => !n.isMullvad },
+  { id: "mullvad", label: "Mullvad", test: (n) => n.isMullvad },
 ];
 
 export type SortKey =
@@ -277,4 +308,113 @@ export function findNodeByName(
       n.ips.includes(needle) ||
       n.id === name,
   );
+}
+
+// ---------------------------------------------------------------------------
+// Devices
+// ---------------------------------------------------------------------------
+
+/** Your tailnet's devices: every peer except Mullvad relays, which only matter as exit nodes. */
+export function tailnetDevices(peers: readonly Peer[]): Peer[] {
+  return peers.filter((p) => !p.isMullvad);
+}
+
+const NO_SSH_OS = new Set(["ios", "android", "tvos"]);
+
+/** Phones and TVs run no SSH server; everything else may. */
+export function mayRunSsh(p: Peer): boolean {
+  return !NO_SSH_OS.has(p.os.toLowerCase());
+}
+
+/** How this device reaches the peer right now, or when it was last seen. */
+export function connectionLabel(p: Peer, now = Date.now()): string {
+  if (p.expired) return "key expired";
+  if (!p.online) return p.lastSeen ? relTime(p.lastSeen, now) : "offline";
+  if (p.curAddr) return "direct";
+  if (p.peerRelay) return "peer relay";
+  if (p.inSession && p.relay) return `relay ${p.relay}`;
+  return "idle";
+}
+
+export type DeviceFilter = "all" | "online" | "mine" | "tagged";
+
+export const DEVICE_FILTERS: readonly { id: DeviceFilter; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "online", label: "Online" },
+  { id: "mine", label: "Mine" },
+  { id: "tagged", label: "Tagged" },
+];
+
+export type DeviceSort =
+  "status" | "name" | "os" | "owner" | "seen" | "latency";
+
+export const DEVICE_SORTS: readonly { id: DeviceSort; label: string }[] = [
+  { id: "status", label: "Status" },
+  { id: "name", label: "Name" },
+  { id: "os", label: "OS" },
+  { id: "owner", label: "Owner" },
+  { id: "seen", label: "Last seen" },
+  { id: "latency", label: "Latency" },
+];
+
+export interface DeviceQuery {
+  text: string;
+  filter: DeviceFilter;
+  sort: DeviceSort;
+  desc: boolean;
+}
+
+function seenRank(p: Peer): number {
+  if (p.online) return Number.POSITIVE_INFINITY;
+  return p.lastSeen?.getTime() ?? 0;
+}
+
+export function applyDeviceQuery(
+  devices: readonly Peer[],
+  q: DeviceQuery,
+  me: string | null,
+  lat: LatencyLookup,
+): Peer[] {
+  const tokens = tokenize(q.text);
+  const keep = (p: Peer): boolean => {
+    switch (q.filter) {
+      case "all":
+        return true;
+      case "online":
+        return p.online;
+      case "mine":
+        return me !== null && p.owner === me && p.tags.length === 0;
+      case "tagged":
+        return p.tags.length > 0;
+    }
+  };
+  const out = devices.filter((p) => keep(p) && matchesTokens(p, tokens));
+  const cmp = (a: Peer, b: Peer): number => {
+    switch (q.sort) {
+      case "status":
+        return (
+          statusRank(a) - statusRank(b) ||
+          seenRank(b) - seenRank(a) ||
+          cmpStr(a.name, b.name)
+        );
+      case "name":
+        return cmpStr(a.name, b.name);
+      case "os":
+        return cmpStr(osLabel(a.os), osLabel(b.os)) || cmpStr(a.name, b.name);
+      case "owner":
+        return (
+          cmpStr(a.tags[0] ?? a.owner ?? "", b.tags[0] ?? b.owner ?? "") ||
+          cmpStr(a.name, b.name)
+        );
+      case "seen":
+        return seenRank(b) - seenRank(a) || cmpStr(a.name, b.name);
+      case "latency": {
+        const [ga, va] = latencyOrder(lat(a.id));
+        const [gb, vb] = latencyOrder(lat(b.id));
+        return ga - gb || va - vb || cmpStr(a.name, b.name);
+      }
+    }
+  };
+  out.sort((a, b) => (q.desc ? -cmp(a, b) : cmp(a, b)));
+  return out;
 }

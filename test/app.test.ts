@@ -24,8 +24,10 @@ interface Harness {
 
 let active: Harness | null = null;
 
-/** Full layout: toolbar(3) + panel border(1) + column header(1). */
-const ROW_Y = 5;
+/** Full layout: tab strip(1) + toolbar(3) + panel border(1) + column header(1). */
+const ROW_Y = 6;
+/** The row the toolbar chips sit on: tab strip(1) + the search box's top border(1). */
+const TOOLBAR_Y = 2;
 /** Every exit-node capable peer in the fixture (the non-exit "phone" peer is filtered out). */
 const TOTAL = 15;
 const ONLINE = 12;
@@ -45,6 +47,7 @@ async function boot(
     backend,
     refreshMs: 0,
     version: "test",
+    view: "exit",
   });
   await app.start();
   const settle = async () => {
@@ -52,7 +55,7 @@ async function boot(
   };
   await settle();
   const compact = height < 22;
-  const firstRow = compact ? 3 : ROW_Y;
+  const firstRow = compact ? 4 : ROW_Y;
   const lines = () => setup.captureCharFrame().split("\n");
   const h: Harness = {
     setup,
@@ -208,22 +211,23 @@ describe("tsexit UI", () => {
     expect(h.lines()[y]!).not.toBe(before);
   });
 
-  test("filter hotkeys and chip clicks", async () => {
+  test("filter keys and chip clicks", async () => {
     const h = await boot();
-    h.setup.mockInput.pressKey("4");
+    // All -> Online -> Tailnet -> Mullvad
+    for (let i = 0; i < 3; i++) h.setup.mockInput.pressKey("f");
     await h.settle();
     expect(h.list()).not.toContain("home-server");
     expect(h.list()).toContain("-wg-");
-    h.setup.mockInput.pressKey("3");
+    h.setup.mockInput.pressKey("f", { shift: true });
     await h.settle();
     expect(h.list()).toContain("home-server");
     expect(h.list()).not.toContain("-wg-");
 
-    // Click the "All" chip on the toolbar row (y=1).
-    const toolbarLine = h.lines()[1]!;
+    // Click the "All" chip on the toolbar row.
+    const toolbarLine = h.lines()[TOOLBAR_Y]!;
     const x = toolbarLine.indexOf("All");
     expect(x).toBeGreaterThan(0);
-    await h.setup.mockMouse.click(x, 1);
+    await h.setup.mockMouse.click(x, TOOLBAR_Y);
     await h.settle();
     expect(h.list()).toContain("-wg-");
     expect(h.frame()).toContain(`Exit nodes · ${TOTAL}`);
@@ -294,9 +298,9 @@ describe("tsexit UI", () => {
 
   test("the Ping all chip pings the visible nodes with the mouse", async () => {
     const h = await boot(120, 32, { delayMs: 60 });
-    const x = h.lines()[1]!.indexOf("Ping all");
+    const x = h.lines()[TOOLBAR_Y]!.indexOf("Ping all");
     expect(x).toBeGreaterThan(0);
-    await h.setup.mockMouse.click(x + 1, 1);
+    await h.setup.mockMouse.click(x + 1, TOOLBAR_Y);
     await h.setup.waitForFrame((f) => f.includes("Pinging…"), {
       maxPasses: 40,
     });
@@ -397,8 +401,8 @@ describe("tsexit UI", () => {
     expect(f).not.toContain("Details");
     expect(f).not.toContain("ACTIVE");
     expect(h.selectedName()).toBe("home-server");
-    // toolbar 1 + border 1 + column header 1 -> first row at y=3
-    expect(h.lines()[3]!).toContain("▸");
+    // tabs 1 + toolbar 1 + border 1 + column header 1 -> first row at y=4
+    expect(h.lines()[4]!).toContain("▸");
   });
 
   test("toggling the details panel widens the list", async () => {

@@ -1,230 +1,60 @@
 import {
   BoxRenderable,
   InputRenderable,
-  InputRenderableEvents,
-  ScrollBarRenderable,
-  StyledText,
-  TextAttributes,
   TextRenderable,
-  parseColor,
   type CliRenderer,
   type KeyEvent,
-  type MouseEvent,
-  type MousePointerStyle,
-  type RGBA,
   type TextChunk,
 } from "@opentui/core";
+import { readdirSync, statSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { netcheck, type NetcheckReport } from "./backend/netcheck";
 import { BackendError, type Backend } from "./backend/types";
 import {
   errorMessage,
   fit,
-  fmtLatency,
-  humanBytes,
-  osLabel,
   relTime,
   truncate,
   width,
   wrapText,
 } from "./format";
-import {
-  FILTERS,
-  SORTS,
-  applyQuery,
-  findNodeByName,
-  locationLong,
-  statusLabel,
-  type ExitNode,
-  type FilterKind,
-  type Latency,
-  type NodeStatus,
-  type Query,
-  type SortKey,
-  type TailscaleState,
-} from "./model";
+import { NAME } from "./meta";
+import type { Latency, Peer, TailscaleState } from "./model";
 import { theme } from "./theme";
+import {
+  SPINNER,
+  btn,
+  ch,
+  makeChip,
+  pointer,
+  setChip,
+  styled,
+  type Chip,
+  type Style,
+} from "./ui";
+import type {
+  NetcheckCache,
+  Pinger,
+  PromptOptions,
+  ToastKind,
+  View,
+  ViewContext,
+  ViewId,
+} from "./view";
+import { DevicesView } from "./views/devices";
+import { ExitNodesView } from "./views/exit-nodes";
+import { HomeView } from "./views/home";
+import { NetworkView } from "./views/network";
+import { SettingsView } from "./views/settings";
+import { SharingView } from "./views/sharing";
 
-// ---------------------------------------------------------------------------
-// Styled text helpers
-// ---------------------------------------------------------------------------
+export { computeColumns } from "./views/exit-nodes";
 
-interface Style {
-  fg?: string;
-  bg?: string;
-  bold?: boolean;
-  dim?: boolean;
-  italic?: boolean;
-  underline?: boolean;
-}
-
-const colorCache = new Map<string, RGBA>();
-
-function color(hex: string): RGBA {
-  let c = colorCache.get(hex);
-  if (!c) {
-    c = parseColor(hex);
-    colorCache.set(hex, c);
-  }
-  return c;
-}
-
-function ch(text: string, style: Style = {}): TextChunk {
-  let attributes = 0;
-  if (style.bold) attributes |= TextAttributes.BOLD;
-  if (style.dim) attributes |= TextAttributes.DIM;
-  if (style.italic) attributes |= TextAttributes.ITALIC;
-  if (style.underline) attributes |= TextAttributes.UNDERLINE;
-  return {
-    __isChunk: true,
-    text,
-    fg: style.fg ? color(style.fg) : undefined,
-    bg: style.bg ? color(style.bg) : undefined,
-    attributes,
-  };
-}
-
-function styled(chunks: TextChunk[]): StyledText {
-  return new StyledText(chunks);
-}
-
-function chunksWidth(chunks: TextChunk[]): number {
-  let w = 0;
-  for (const c of chunks) w += width(c.text);
-  return w;
-}
-
-/** Trim a single-line chunk list so it never exceeds `max` cells. */
-function trimChunks(chunks: TextChunk[], max: number): TextChunk[] {
-  const out: TextChunk[] = [];
-  let w = 0;
-  for (const c of chunks) {
-    const cw = width(c.text);
-    if (w + cw <= max) {
-      out.push(c);
-      w += cw;
-      continue;
-    }
-    const room = max - w;
-    if (room > 0) out.push({ ...c, text: truncate(c.text, room) });
-    break;
-  }
-  return out;
-}
-
-// ---------------------------------------------------------------------------
-// Columns
-// ---------------------------------------------------------------------------
-
-type ColId =
-  "mark" | "name" | "status" | "location" | "latency" | "os" | "priority";
-
-interface Column {
-  id: ColId;
-  label: string;
-  width: number;
-  align: "left" | "right";
-  sort?: SortKey;
-}
-
-const COL_GAP = 1;
-const NAME_MIN = 14;
-
-/**
- * Pick the columns that fit in `total` cells; the name column absorbs the remainder.
- * The OS column is dropped when no node reports one (Tailscale reports no OS for Mullvad nodes).
- */
-export function computeColumns(total: number, showOs = true): Column[] {
-  const cols: Column[] = [
-    { id: "mark", label: "", width: 3, align: "left" },
-    { id: "name", label: "Node", width: NAME_MIN, align: "left", sort: "name" },
-  ];
-  const optional: Column[] = [
-    { id: "status", label: "Status", width: 8, align: "left", sort: "status" },
-    {
-      id: "location",
-      label: "Location",
-      width: 18,
-      align: "left",
-      sort: "location",
-    },
-    {
-      id: "latency",
-      label: "Latency",
-      width: 8,
-      align: "right",
-      sort: "latency",
-    },
-    { id: "os", label: "OS", width: 8, align: "left", sort: "os" },
-    {
-      id: "priority",
-      label: "Prio",
-      width: 5,
-      align: "right",
-      sort: "priority",
-    },
-  ];
-  let used = 3 + COL_GAP + NAME_MIN;
-  for (const c of optional) {
-    if (c.id === "os" && !showOs) continue;
-    if (used + COL_GAP + c.width > total) break;
-    cols.push(c);
-    used += COL_GAP + c.width;
-  }
-  cols[1]!.width = Math.max(8, NAME_MIN + (total - used));
-  return cols;
-}
-
-function statusDot(st: NodeStatus): TextChunk {
-  switch (st) {
-    case "active":
-      return ch("◉", { fg: theme.green, bold: true });
-    case "online":
-      return ch("●", { fg: theme.green });
-    case "offline":
-      return ch("○", { fg: theme.textMuted });
-    case "expired":
-      return ch("✗", { fg: theme.red });
-  }
-}
-
-function statusChunk(st: NodeStatus, w: number): TextChunk {
-  const text = st === "active" ? "ACTIVE" : st;
-  const s = w > 0 ? fit(text, w) : text;
-  switch (st) {
-    case "active":
-      return ch(s, { fg: theme.green, bold: true });
-    case "online":
-      return ch(s, { fg: theme.green });
-    case "offline":
-      return ch(s, { fg: theme.textMuted });
-    case "expired":
-      return ch(s, { fg: theme.red });
-  }
-}
-
-function latencyChunk(v: Latency | undefined, w: number): TextChunk {
-  const text = w > 0 ? fit(fmtLatency(v), w, "right") : fmtLatency(v);
-  if (v === undefined) return ch(text, { fg: theme.textMuted });
-  if (v === "pending") return ch(text, { fg: theme.accent });
-  if (v === null) return ch(text, { fg: theme.red });
-  const fg = v < 60 ? theme.green : v < 150 ? theme.yellow : theme.orange;
-  return ch(text, { fg });
-}
-
-function pathLabel(n: ExitNode): string {
-  if (n.curAddr) return `direct ${n.curAddr}`;
-  if (n.peerRelay) return `via peer relay ${n.peerRelay}`;
-  if (n.relay) return `relayed via DERP ${n.relay}`;
-  return n.active ? "negotiating path…" : "—";
-}
-
-function errText(e: unknown): string {
+export function errText(e: unknown): string {
   if (e instanceof BackendError && e.hint) return `${e.message}. ${e.hint}`;
   return errorMessage(e);
 }
-
-// ---------------------------------------------------------------------------
-// App
-// ---------------------------------------------------------------------------
 
 export interface AppOptions {
   backend: Backend;
@@ -232,65 +62,15 @@ export interface AppOptions {
   refreshMs?: number;
   showDetails?: boolean;
   version?: string;
+  /** View shown first. */
+  view?: ViewId;
+  /** Runs interactive commands; tests replace it. Defaults to suspending the UI and spawning. */
+  spawn?: (argv: string[]) => Promise<number>;
 }
 
-type Mode = "list" | "search";
-type ToastKind = "info" | "ok" | "warn" | "error";
-
-interface Chip {
-  box: BoxRenderable;
-  text: TextRenderable;
-}
-
-interface Row {
-  box: BoxRenderable;
-  text: TextRenderable;
-}
-
-const DOUBLE_CLICK_MS = 400;
-const FORCE_WINDOW_MS = 4000;
-const SPINNER = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const DETAILS_WIDTH = 46;
-const DETAILS_MIN_TOTAL = 100;
-const COMPACT_HEIGHT = 22;
+const CONFIRM_MS = 4000;
 const HELP_WIDTH = 92;
-
-const HELP_LINES: [string, string][] = [
-  [
-    "Navigate",
-    "↑/k ↓/j move · PgUp/PgDn page · Home/g End/G · Tab or / search",
-  ],
-  [
-    "Exit node",
-    "Enter connect or disconnect · d/x disconnect · a auto exit node on/off · A use suggested node",
-  ],
-  [
-    "Search",
-    "type to filter by name, IP, country, city, OS, owner · !word excludes",
-  ],
-  [
-    "In search",
-    "Enter apply and back · Esc clear and back · ↑↓ move selection · Tab back to list",
-  ],
-  [
-    "Filter, sort",
-    "f/F filter · 1-4 pick filter · s sort field · S reverse · click column headers",
-  ],
-  [
-    "Measure",
-    "p ping selected · P ping all visible · right-click pings · Mullvad nodes: ICMP to their relay",
-  ],
-  ["Options", "l LAN access while connected · i details panel · r/F5 refresh"],
-  ["Clipboard", "y or c copy Tailscale IP · middle-click a row copies it"],
-  [
-    "Mouse",
-    "click select · double-click connect · wheel scroll · drag scrollbar · click chips and Ping all",
-  ],
-  [
-    "General",
-    "? or F1 this help · Esc clear search, dismiss toast, close help · q quit",
-  ],
-];
+const PROMPT_WIDTH = 68;
 
 export class App {
   readonly done: Promise<void>;
@@ -300,96 +80,90 @@ export class App {
   private readonly backend: Backend;
   private readonly refreshMs: number;
   private readonly version: string;
+  private readonly spawn?: (argv: string[]) => Promise<number>;
 
-  // ---- state
+  // ---- shared state
   private state: TailscaleState | null = null;
-  private allNodes: ExitNode[] = [];
-  private nodes: ExitNode[] = [];
-  private query: Query = {
-    text: "",
-    filter: "all",
-    sort: "status",
-    desc: false,
-  };
-  private selectedId: string | null = null;
-  private sel = -1;
-  private top = 0;
-  private hover = -1;
-  private mode: Mode = "list";
-  private helpOpen = false;
-  private busy: string | null = null;
-  private spin = 0;
-  private readonly latency = new Map<string, Latency>();
-  private readonly latencyVia = new Map<string, string>();
-  private showOs = true;
-  private pingAllRunning = false;
-  private suggestedName: string | null = null;
-  private forceArm: { id: string; until: number } | null = null;
-  private lastRefresh = 0;
   private lastError: string | null = null;
   private lastHealth = "";
-  private toast: { text: string; kind: ToastKind } | null = null;
-  private toastTimer: ReturnType<typeof setTimeout> | null = null;
-  private detailsWanted: boolean;
-  private lastClick = { index: -1, at: 0 };
+  private lastRefresh = 0;
   private refreshing = false;
+  private busy: string | null = null;
+  private spin = 0;
+  private suggestedName: string | null = null;
+  private armedKey: { key: string; until: number } | null = null;
+  private readonly latency = new Map<string, Latency>();
+  private readonly latencyVia = new Map<string, string>();
+  private pingAllRunning = false;
+  private netReport: NetcheckReport | null = null;
+  private netError: string | null = null;
+  private netRun: Promise<void> | null = null;
+
+  // ---- views
+  private readonly views: View[];
+  private active!: View;
+  private readonly ctx: ViewContext;
+
+  // ---- lifecycle
   private stopped = false;
-  private pointerStyle: MousePointerStyle = "default";
   private readonly intervals: ReturnType<typeof setInterval>[] = [];
   private readonly timeouts = new Set<ReturnType<typeof setTimeout>>();
   private spinnerTimer: ReturnType<typeof setInterval> | null = null;
-  private cols: Column[] = computeColumns(80);
-  private colsWidth = 80;
-  private rows: Row[] = [];
-  private helpHeight = 15;
+  private toast: { text: string; kind: ToastKind } | null = null;
+  private toastTimer: ReturnType<typeof setTimeout> | null = null;
 
   // ---- renderables
   private root!: BoxRenderable;
-  private toolbar!: BoxRenderable;
-  private searchBox!: BoxRenderable;
-  private searchIcon!: TextRenderable;
-  private search!: InputRenderable;
-  private showLabel!: TextRenderable;
-  private sortLabel!: TextRenderable;
-  private filterChips: { id: FilterKind; chip: Chip }[] = [];
-  private sortChip!: Chip;
-  private autoChip!: Chip;
-  private lanChip!: Chip;
-  private pingAllChip!: Chip;
+  private tabBar!: BoxRenderable;
+  private tabs: { view: View; chip: Chip }[] = [];
   private helpChip!: Chip;
-  private main!: BoxRenderable;
-  private listPanel!: BoxRenderable;
-  private colHeaderBox!: BoxRenderable;
-  private colHeader!: TextRenderable;
-  private rowsArea!: BoxRenderable;
-  private rowsBox!: BoxRenderable;
-  private emptyBox!: BoxRenderable;
-  private emptyText!: TextRenderable;
-  private scrollbar!: ScrollBarRenderable;
-  private details!: BoxRenderable;
-  private detailsText!: TextRenderable;
-  private buttonRow!: BoxRenderable;
-  private btnConnect!: Chip;
-  private btnPing!: Chip;
-  private btnCopy!: Chip;
+  private host!: BoxRenderable;
+  private viewRoots = new Map<ViewId, BoxRenderable>();
   private toastBox!: BoxRenderable;
   private toastText!: TextRenderable;
   private scrim!: BoxRenderable;
   private helpBox!: BoxRenderable;
   private helpText!: TextRenderable;
+  private helpOpen = false;
+  private helpHeight = 15;
+  private promptBox!: BoxRenderable;
+  private promptLabel!: TextRenderable;
+  private promptInput!: InputRenderable;
+  private promptInputBox!: BoxRenderable;
+  private promptHint!: TextRenderable;
+  private promptOk!: Chip;
+  private promptCancel!: Chip;
+  private promptOpts: PromptOptions | null = null;
+  private promptError: string | null = null;
 
   constructor(renderer: CliRenderer, opts: AppOptions) {
     this.r = renderer;
     this.backend = opts.backend;
     this.refreshMs = opts.refreshMs ?? 5000;
     this.version = opts.version ?? "dev";
-    this.detailsWanted = opts.showDetails ?? true;
+    this.spawn = opts.spawn;
     this.done = new Promise<void>((resolve) => {
       this.resolveDone = resolve;
     });
+    this.views = [
+      new HomeView(),
+      new ExitNodesView({ showDetails: opts.showDetails ?? true }),
+      new DevicesView(),
+      new NetworkView(),
+      new SharingView(),
+      new SettingsView(),
+    ];
+    this.ctx = this.makeContext();
     this.build();
     this.bind();
+    this.active = this.view(opts.view ?? "home");
+    for (const v of this.views)
+      this.viewRoots.get(v.id)!.visible = v === this.active;
     this.layout();
+  }
+
+  private view(id: ViewId): View {
+    return this.views.find((v) => v.id === id) ?? this.views[0]!;
   }
 
   // -------------------------------------------------------------------------
@@ -398,10 +172,11 @@ export class App {
 
   async start(): Promise<void> {
     try {
-      this.r.setTerminalTitle("tsexit");
+      this.r.setTerminalTitle(NAME);
     } catch {
       // not supported by every output
     }
+    this.active.onShow();
     await this.refresh();
     void this.fetchSuggestion();
     if (this.refreshMs > 0) {
@@ -421,6 +196,8 @@ export class App {
   stop(): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.active.onHide();
+    for (const v of this.views) v.dispose();
     for (const t of this.intervals) clearInterval(t);
     this.intervals.length = 0;
     for (const t of this.timeouts) clearTimeout(t);
@@ -435,54 +212,86 @@ export class App {
     this.stop();
   }
 
+  private later(ms: number, fn: () => void): void {
+    const t = setTimeout(() => {
+      this.timeouts.delete(t);
+      if (!this.stopped) fn();
+    }, ms);
+    this.timeouts.add(t);
+  }
+
+  // -------------------------------------------------------------------------
+  // Context handed to the views
+  // -------------------------------------------------------------------------
+
+  private makeContext(): ViewContext {
+    const app = this;
+    const pinger: Pinger = {
+      get: (id) => app.latency.get(id),
+      via: (id) => app.latencyVia.get(id),
+      get allRunning() {
+        return app.pingAllRunning;
+      },
+      ping: (p, opts) => app.pingOne(p, opts?.quiet === true),
+      pingAll: (targets) => app.pingAll(targets),
+    };
+    const net: NetcheckCache = {
+      get report() {
+        return app.netReport;
+      },
+      get error() {
+        return app.netError;
+      },
+      get running() {
+        return app.netRun !== null;
+      },
+      run: () => app.runNetcheck(),
+    };
+    return {
+      r: this.r,
+      backend: this.backend,
+      get state() {
+        return app.state;
+      },
+      get error() {
+        return app.lastError;
+      },
+      get busy() {
+        return app.busy;
+      },
+      get suggested() {
+        return app.suggestedName;
+      },
+      pinger,
+      netcheck: net,
+      version: this.version,
+      refreshMs: this.refreshMs,
+      refresh: () => this.refresh(),
+      fetchSuggestion: () => this.fetchSuggestion(),
+      notify: (text, kind, ms) => this.notify(text, kind, ms),
+      runAction: (label, fn, opts) => this.runAction(label, fn, opts),
+      confirm: (key, warning) => this.confirm(key, warning),
+      armed: () =>
+        this.armedKey && Date.now() < this.armedKey.until
+          ? this.armedKey.key
+          : null,
+      go: (id, select) => this.go(id, select),
+      copy: (text, what) => this.copy(text, what),
+      prompt: (opts) => this.openPrompt(opts),
+      runInteractive: (argv, banner) => this.runInteractive(argv, banner),
+      busyTitle: () =>
+        this.busy
+          ? `· ${SPINNER[this.spin % SPINNER.length]} ${this.busy} `
+          : "",
+    };
+  }
+
   // -------------------------------------------------------------------------
   // Building the tree
   // -------------------------------------------------------------------------
 
-  private makeChip(
-    id: string,
-    label: string,
-    onClick: (e: MouseEvent) => void,
-  ): Chip {
-    const box = new BoxRenderable(this.r, {
-      id,
-      height: 1,
-      paddingX: 1,
-      flexShrink: 0,
-      backgroundColor: theme.chipBg,
-      onMouseDown: (e) => {
-        if (e.button === 0) onClick(e);
-      },
-      onMouseOver: () => this.pointer("pointer"),
-      onMouseOut: () => this.pointer("default"),
-    });
-    const text = new TextRenderable(this.r, {
-      content: label,
-      fg: theme.chipFg,
-      height: 1,
-      wrapMode: "none",
-      selectable: false,
-    });
-    box.add(text);
-    return { box, text };
-  }
-
-  private setChip(
-    chip: Chip,
-    label: string,
-    opts: { active?: boolean; bg?: string; fg?: string; bold?: boolean } = {},
-  ): void {
-    const bg = opts.bg ?? (opts.active ? theme.chipActiveBg : theme.chipBg);
-    const fg = opts.fg ?? (opts.active ? theme.chipActiveFg : theme.chipFg);
-    chip.box.backgroundColor = bg;
-    chip.text.content = styled([
-      ch(label, { fg, bold: opts.bold ?? opts.active }),
-    ]);
-  }
-
   private build(): void {
     const r = this.r;
-
     this.root = new BoxRenderable(r, {
       id: "app",
       width: "100%",
@@ -491,231 +300,43 @@ export class App {
       backgroundColor: theme.bg,
     });
 
-    // ---- toolbar
-    this.toolbar = new BoxRenderable(r, {
-      id: "toolbar",
-      height: 3,
+    // ---- tab strip
+    this.tabBar = new BoxRenderable(r, {
+      id: "tabs",
+      height: 1,
+      flexShrink: 0,
       flexDirection: "row",
-      alignItems: "center",
       paddingX: 1,
       gap: 1,
     });
-    this.searchBox = new BoxRenderable(r, {
-      id: "searchbox",
-      flexGrow: 1,
-      flexShrink: 1,
-      flexBasis: 0,
-      minWidth: 18,
-      height: 3,
-      border: true,
-      borderStyle: "rounded",
-      borderColor: theme.border,
-      flexDirection: "row",
-      paddingX: 1,
-      onMouseDown: () => this.focusSearch(),
-      onMouseOver: () => this.pointer("text"),
-      onMouseOut: () => this.pointer("default"),
-    });
-    this.searchIcon = new TextRenderable(r, {
-      content: "⌕ ",
-      fg: theme.textDim,
-      width: 2,
-      height: 1,
-      selectable: false,
-    });
-    this.search = new InputRenderable(r, {
-      id: "search",
-      flexGrow: 1,
-      flexShrink: 1,
-      flexBasis: 0,
-      minWidth: 8,
-      placeholder: "search name, IP, country, city, OS…  (/)",
-      placeholderColor: theme.textMuted,
-      textColor: theme.text,
-      backgroundColor: "transparent",
-      focusedBackgroundColor: "transparent",
-      cursorColor: theme.accent,
-    });
-    this.searchBox.add(this.searchIcon);
-    this.searchBox.add(this.search);
-
-    this.showLabel = new TextRenderable(r, {
-      content: "Show",
-      fg: theme.textMuted,
-      height: 1,
-      selectable: false,
-    });
-    for (const f of FILTERS) {
-      const chip = this.makeChip(`filter-${f.id}`, f.label, () =>
-        this.setFilter(f.id),
-      );
-      this.filterChips.push({ id: f.id, chip });
+    for (const v of this.views) {
+      const chip = makeChip(r, `tab-${v.id}`, v.title, () => this.go(v.id));
+      this.tabs.push({ view: v, chip });
+      this.tabBar.add(chip.box);
     }
-    this.sortLabel = new TextRenderable(r, {
-      content: "Sort",
-      fg: theme.textMuted,
-      height: 1,
-      selectable: false,
-    });
-    this.sortChip = this.makeChip("sort", "", (e) =>
-      e.modifiers.shift ? this.toggleDesc() : this.nextSort(1),
+    this.tabBar.add(
+      new BoxRenderable(r, { id: "tabs-spacer", flexGrow: 1, height: 1 }),
     );
-    this.autoChip = this.makeChip(
-      "auto",
-      "★ Auto",
-      () => void this.toggleAuto(),
-    );
-    this.lanChip = this.makeChip("lan", "LAN", () => void this.toggleLan());
-    this.pingAllChip = this.makeChip("pingall", "Ping all", () =>
-      this.pingAll(),
-    );
-    this.helpChip = this.makeChip("help", "?", () => this.toggleHelp());
+    this.helpChip = makeChip(r, "help", "?", () => this.toggleHelp());
+    this.tabBar.add(this.helpChip.box);
 
-    this.toolbar.add(this.searchBox);
-    this.toolbar.add(this.showLabel);
-    for (const f of this.filterChips) this.toolbar.add(f.chip.box);
-    this.toolbar.add(this.sortLabel);
-    this.toolbar.add(this.sortChip.box);
-    this.toolbar.add(this.autoChip.box);
-    this.toolbar.add(this.lanChip.box);
-    this.toolbar.add(this.pingAllChip.box);
-    this.toolbar.add(this.helpChip.box);
-
-    // ---- main: list + details
-    this.main = new BoxRenderable(r, {
-      id: "main",
-      flexGrow: 1,
-      flexDirection: "row",
-      paddingX: 1,
-      gap: 1,
-    });
-
-    this.listPanel = new BoxRenderable(r, {
-      id: "list",
-      flexGrow: 1,
-      flexShrink: 1,
-      minWidth: 30,
-      border: true,
-      borderStyle: "rounded",
-      borderColor: theme.borderFocus,
-      title: " Exit nodes ",
-      titleColor: theme.accent,
-      flexDirection: "column",
-      overflow: "hidden",
-    });
-    this.colHeaderBox = new BoxRenderable(r, {
-      id: "colheader",
-      height: 1,
-      flexDirection: "row",
-      backgroundColor: theme.panel,
-      onMouseDown: (e) => this.onHeaderClick(e),
-      onMouseOver: () => this.pointer("pointer"),
-      onMouseOut: () => this.pointer("default"),
-    });
-    this.colHeader = new TextRenderable(r, {
-      content: "",
-      height: 1,
-      flexGrow: 1,
-      wrapMode: "none",
-      fg: theme.textDim,
-      selectable: false,
-    });
-    this.colHeaderBox.add(this.colHeader);
-
-    this.rowsArea = new BoxRenderable(r, {
-      id: "rowsarea",
-      flexGrow: 1,
-      flexDirection: "row",
-      onMouseScroll: (e) => {
-        if (!e.scroll) return;
-        if (e.scroll.direction === "up") this.scrollBy(-3);
-        else if (e.scroll.direction === "down") this.scrollBy(3);
-      },
-    });
-    this.rowsBox = new BoxRenderable(r, {
-      id: "rows",
+    // ---- view host
+    this.host = new BoxRenderable(r, {
+      id: "host",
       flexGrow: 1,
       flexDirection: "column",
-      overflow: "hidden",
-      onSizeChange: () => this.onRowsResize(),
     });
-    this.emptyBox = new BoxRenderable(r, {
-      id: "empty",
-      flexGrow: 1,
-      alignItems: "center",
-      justifyContent: "center",
-      paddingX: 2,
-      visible: false,
-    });
-    this.emptyText = new TextRenderable(r, {
-      content: "",
-      fg: theme.textDim,
-      wrapMode: "word",
-      selectable: false,
-    });
-    this.emptyBox.add(this.emptyText);
-    this.scrollbar = new ScrollBarRenderable(r, {
-      id: "scrollbar",
-      orientation: "vertical",
-      width: 1,
-      flexShrink: 0,
-      showArrows: false,
-      trackOptions: {
-        backgroundColor: theme.panel,
-        foregroundColor: theme.border,
-      },
-      onChange: (pos) => {
-        this.top = Math.round(pos);
-        this.renderRows();
-      },
-    });
-    this.rowsArea.add(this.rowsBox);
-    this.rowsArea.add(this.emptyBox);
-    this.rowsArea.add(this.scrollbar);
-    this.listPanel.add(this.colHeaderBox);
-    this.listPanel.add(this.rowsArea);
-
-    this.details = new BoxRenderable(r, {
-      id: "details",
-      width: DETAILS_WIDTH,
-      flexShrink: 0,
-      border: true,
-      borderStyle: "rounded",
-      borderColor: theme.border,
-      title: " Details ",
-      titleColor: theme.textDim,
-      flexDirection: "column",
-      paddingX: 1,
-      overflow: "hidden",
-    });
-    this.detailsText = new TextRenderable(r, {
-      content: "",
-      flexGrow: 1,
-      wrapMode: "none",
-      fg: theme.text,
-    });
-    this.buttonRow = new BoxRenderable(r, {
-      id: "buttons",
-      height: 1,
-      flexDirection: "row",
-      gap: 1,
-      flexShrink: 0,
-    });
-    this.btnConnect = this.makeChip("btn-connect", "Connect", () =>
-      this.activateSelected(),
-    );
-    this.btnPing = this.makeChip("btn-ping", "Ping", () => this.pingSelected());
-    this.btnCopy = this.makeChip("btn-copy", "Copy IP", () =>
-      this.copySelected(),
-    );
-    this.buttonRow.add(this.btnConnect.box);
-    this.buttonRow.add(this.btnPing.box);
-    this.buttonRow.add(this.btnCopy.box);
-    this.details.add(this.detailsText);
-    this.details.add(this.buttonRow);
-
-    this.main.add(this.listPanel);
-    this.main.add(this.details);
+    for (const v of this.views) {
+      const root = new BoxRenderable(r, {
+        id: `view-${v.id}`,
+        flexGrow: 1,
+        flexDirection: "column",
+        visible: false,
+      });
+      this.viewRoots.set(v.id, root);
+      this.host.add(root);
+      v.build(this.ctx, root);
+    }
 
     // ---- toast (absolute, bottom right)
     this.toastBox = new BoxRenderable(r, {
@@ -731,6 +352,7 @@ export class App {
       onMouseDown: () => this.hideToast(),
     });
     this.toastText = new TextRenderable(r, {
+      id: "toast-text",
       content: "",
       height: 1,
       wrapMode: "none",
@@ -739,7 +361,7 @@ export class App {
     });
     this.toastBox.add(this.toastText);
 
-    // ---- help overlay
+    // ---- overlays: help and prompt share the scrim
     this.scrim = new BoxRenderable(r, {
       id: "scrim",
       position: "absolute",
@@ -750,7 +372,10 @@ export class App {
       zIndex: 99,
       visible: false,
       backgroundColor: theme.scrim,
-      onMouseDown: () => this.toggleHelp(false),
+      onMouseDown: () => {
+        if (this.promptOpts) this.closePrompt();
+        else this.toggleHelp(false);
+      },
     });
     this.helpBox = new BoxRenderable(r, {
       id: "helpbox",
@@ -770,507 +395,167 @@ export class App {
       onMouseDown: (e) => e.stopPropagation(),
     });
     this.helpText = new TextRenderable(r, {
+      id: "help-text",
       content: "",
       wrapMode: "none",
       fg: theme.text,
     });
     this.helpBox.add(this.helpText);
+    this.buildPrompt();
 
-    this.root.add(this.toolbar);
-    this.root.add(this.main);
+    this.root.add(this.tabBar);
+    this.root.add(this.host);
     this.root.add(this.toastBox);
     this.root.add(this.scrim);
     this.root.add(this.helpBox);
+    this.root.add(this.promptBox);
     r.root.add(this.root);
+  }
+
+  private buildPrompt(): void {
+    const r = this.r;
+    this.promptBox = new BoxRenderable(r, {
+      id: "prompt",
+      position: "absolute",
+      zIndex: 100,
+      visible: false,
+      width: PROMPT_WIDTH,
+      border: true,
+      borderStyle: "double",
+      borderColor: theme.accent,
+      titleColor: theme.accent,
+      backgroundColor: theme.panel,
+      paddingX: 2,
+      paddingY: 1,
+      flexDirection: "column",
+      onMouseDown: (e) => e.stopPropagation(),
+    });
+    this.promptLabel = new TextRenderable(r, {
+      id: "prompt-label",
+      content: "",
+      wrapMode: "word",
+      fg: theme.text,
+    });
+    this.promptInputBox = new BoxRenderable(r, {
+      id: "prompt-inputbox",
+      height: 3,
+      flexShrink: 0,
+      border: true,
+      borderStyle: "rounded",
+      borderColor: theme.borderFocus,
+      paddingX: 1,
+      onMouseDown: () => this.promptInput.focus(),
+      onMouseOver: () => pointer(r, "text"),
+      onMouseOut: () => pointer(r, "default"),
+    });
+    this.promptInput = new InputRenderable(r, {
+      id: "prompt-input",
+      flexGrow: 1,
+      placeholderColor: theme.textMuted,
+      textColor: theme.text,
+      backgroundColor: "transparent",
+      focusedBackgroundColor: "transparent",
+      cursorColor: theme.accent,
+    });
+    this.promptInputBox.add(this.promptInput);
+    this.promptHint = new TextRenderable(r, {
+      id: "prompt-hint",
+      content: "",
+      wrapMode: "word",
+      fg: theme.textMuted,
+    });
+    const buttons = new BoxRenderable(r, {
+      id: "prompt-buttons",
+      height: 1,
+      flexShrink: 0,
+      flexDirection: "row",
+      gap: 1,
+      marginTop: 1,
+    });
+    this.promptOk = makeChip(
+      r,
+      "prompt-ok",
+      "OK",
+      () => void this.submitPrompt(),
+    );
+    this.promptCancel = makeChip(r, "prompt-cancel", "Cancel", () =>
+      this.closePrompt(),
+    );
+    buttons.add(this.promptOk.box);
+    buttons.add(this.promptCancel.box);
+    this.promptBox.add(this.promptLabel);
+    this.promptBox.add(this.promptInputBox);
+    this.promptBox.add(this.promptHint);
+    this.promptBox.add(buttons);
   }
 
   private bind(): void {
     this.r.keyInput.on("keypress", this.onKey);
     this.r.on("resize", () => this.layout());
-    this.r.on("focused_renderable", (current) => {
-      const searching = current === this.search;
-      if (searching !== (this.mode === "search")) {
-        this.mode = searching ? "search" : "list";
-        this.updateFocusVisuals();
-      }
-    });
     this.r.once("destroy", () => this.stop());
-    this.search.on(InputRenderableEvents.INPUT, () => {
-      const v = this.search.value;
-      if (v === this.query.text) return;
-      this.query.text = v;
-      this.requery(true);
-      this.render();
-    });
   }
 
   // -------------------------------------------------------------------------
-  // Layout
+  // Layout and rendering
   // -------------------------------------------------------------------------
 
   private layout(): void {
+    if (this.stopped) return;
     const W = this.r.width;
     const H = this.r.height;
-    const compact = H < COMPACT_HEIGHT;
-    const toolbarH = compact ? 1 : 3;
-
-    this.toolbar.height = toolbarH;
-    this.searchBox.height = toolbarH;
-    this.searchBox.border = !compact;
-    this.searchBox.paddingX = compact ? 0 : 1;
-
-    const showDetails = this.detailsWanted && W >= DETAILS_MIN_TOTAL;
-    this.details.visible = showDetails;
-    // Toolbar chips are dropped from the right as the terminal narrows; every one has a key binding.
-    for (const f of this.filterChips) f.chip.box.visible = W >= 60;
-    this.sortChip.box.visible = W >= 72;
-    this.helpChip.box.visible = W >= 76;
-    this.lanChip.box.visible = W >= 86;
-    this.pingAllChip.box.visible = W >= 100;
-    this.autoChip.box.visible = W >= 112;
-    this.showLabel.visible = W >= 124;
-    this.sortLabel.visible = W >= 124;
-
-    // The row pool is sized from the same numbers Yoga will produce: total height minus
-    // toolbar, list border (2) and column header (1); width minus main padding (2),
-    // the details panel with its gap, list border (2) and scrollbar (1).
-    const rowsH = Math.max(0, H - toolbarH - 3);
-    const rowsW = Math.max(
-      20,
-      W - 2 - (showDetails ? DETAILS_WIDTH + 1 : 0) - 3,
-    );
-    this.syncRows(rowsH, rowsW);
-
+    this.renderTabs();
+    this.active.layout(W, Math.max(1, H - 1));
     this.helpBox.width = Math.max(30, Math.min(HELP_WIDTH, W - 4));
     if (this.helpOpen) this.renderHelp();
-    this.centerHelp();
-    this.render();
-  }
-
-  private centerHelp(): void {
-    if (this.stopped) return;
-    const W = this.r.width;
-    const H = this.r.height;
-    const w = Math.max(30, Math.min(HELP_WIDTH, W - 4));
-    const h = this.helpHeight;
-    this.helpBox.left = Math.max(0, Math.floor((W - w) / 2));
-    this.helpBox.top = Math.max(0, Math.floor((H - h) / 2));
-  }
-
-  private syncRows(h: number, w: number): void {
-    if (w !== this.colsWidth) {
-      this.colsWidth = w;
-      this.cols = computeColumns(w, this.showOs);
-    }
-    this.ensureRows(h);
-    this.ensureVisible();
-  }
-
-  /** Safety net: if Yoga disagrees with the arithmetic in layout(), resize the pool afterwards. */
-  private onRowsResize(): void {
-    // Layout callbacks run inside the render pass; never mutate the tree synchronously here.
-    const t = setTimeout(() => {
-      this.timeouts.delete(t);
-      if (this.stopped) return;
-      const h = Math.max(0, this.rowsBox.height);
-      const w = Math.max(20, this.rowsBox.width);
-      if (h === this.rows.length && w === this.colsWidth) return;
-      this.syncRows(h, w);
-      this.renderList();
-    }, 0);
-    this.timeouts.add(t);
-  }
-
-  private ensureRows(n: number): void {
-    while (this.rows.length < n) {
-      const i = this.rows.length;
-      const box = new BoxRenderable(this.r, {
-        id: `row-${i}`,
-        height: 1,
-        flexShrink: 0,
-        flexDirection: "row",
-        overflow: "hidden",
-        backgroundColor: "transparent",
-        onMouseDown: (e) => this.onRowMouseDown(i, e),
-        onMouseOver: () => this.setHover(i),
-        onMouseOut: () => {
-          if (this.hover === i) this.setHover(-1);
-        },
-      });
-      const text = new TextRenderable(this.r, {
-        content: "",
-        height: 1,
-        flexGrow: 1,
-        wrapMode: "none",
-        fg: theme.text,
-        selectable: false,
-      });
-      box.add(text);
-      this.rowsBox.add(box);
-      this.rows.push({ box, text });
-    }
-    while (this.rows.length > n) {
-      const row = this.rows.pop()!;
-      this.rowsBox.remove(row.box);
-      row.box.destroyRecursively();
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Rendering
-  // -------------------------------------------------------------------------
-
-  private render(): void {
-    if (this.stopped) return;
-    this.renderToolbar();
-    this.renderList();
-    this.renderDetails();
+    this.centerOverlays();
+    this.active.render();
     this.renderToast();
   }
 
-  private currentNode(): ExitNode | undefined {
-    const active = this.allNodes.find((n) => n.active);
-    if (active) return active;
-    const id = this.state?.exitNode?.id;
-    return id ? this.allNodes.find((n) => n.id === id) : undefined;
+  private centerOverlays(): void {
+    const W = this.r.width;
+    const H = this.r.height;
+    const hw = Math.max(30, Math.min(HELP_WIDTH, W - 4));
+    this.helpBox.left = Math.max(0, Math.floor((W - hw) / 2));
+    this.helpBox.top = Math.max(0, Math.floor((H - this.helpHeight) / 2));
+    const pw = Math.max(30, Math.min(PROMPT_WIDTH, W - 4));
+    this.promptBox.width = pw;
+    this.promptBox.left = Math.max(0, Math.floor((W - pw) / 2));
+    this.promptBox.top = Math.max(0, Math.floor((H - 12) / 2));
   }
 
-  private suggestedNode(): ExitNode | undefined {
-    return findNodeByName(this.allNodes, this.suggestedName);
-  }
-
-  private selected(): ExitNode | undefined {
-    return this.sel >= 0 ? this.nodes[this.sel] : undefined;
-  }
-
-  private renderToolbar(): void {
-    for (const f of this.filterChips) {
-      const def = FILTERS.find((d) => d.id === f.id)!;
-      this.setChip(f.chip, def.label, { active: this.query.filter === f.id });
-    }
-    const sort = SORTS.find((x) => x.id === this.query.sort)!;
-    this.setChip(
-      this.sortChip,
-      `${sort.label} ${this.query.desc ? "▾" : "▴"}`,
-      { fg: theme.accent },
-    );
-    const auto = this.state?.autoExitNode;
-    this.setChip(
-      this.autoChip,
-      auto === null || auto === undefined
-        ? "★ Auto ?"
-        : auto
-          ? "★ Auto on"
-          : "★ Auto off",
-      {
-        fg: auto ? theme.yellow : theme.chipFg,
-        bold: auto === true,
-      },
-    );
-    const lan = this.state?.allowLan;
-    this.setChip(
-      this.lanChip,
-      lan === null || lan === undefined ? "LAN ?" : lan ? "LAN on" : "LAN off",
-      {
-        fg: lan ? theme.green : theme.chipFg,
-        bold: lan === true,
-      },
-    );
-    this.setChip(
-      this.pingAllChip,
-      this.pingAllRunning ? "Pinging…" : "Ping all",
-      { fg: this.pingAllRunning ? theme.accent : theme.chipFg },
-    );
-    this.setChip(this.helpChip, "?", { fg: theme.accent, bold: true });
-  }
-
-  private headerChunks(): TextChunk[] {
-    const out: TextChunk[] = [];
-    this.cols.forEach((c, i) => {
-      if (i > 0) out.push(ch(" "));
-      const sorted = c.sort !== undefined && c.sort === this.query.sort;
-      const label = sorted
-        ? `${c.label} ${this.query.desc ? "▾" : "▴"}`
-        : c.label;
-      out.push(
-        ch(fit(label, c.width, c.align), {
-          fg: sorted ? theme.accent : theme.textDim,
-          bold: sorted,
-          underline: sorted,
-        }),
+  private renderTabs(): void {
+    const W = this.r.width;
+    // Full labels, then short ones; the digit that selects a tab stays while there is room.
+    const need = (label: (v: View) => string, digits: boolean) =>
+      this.views.reduce(
+        (w, v) => w + width(label(v)) + (digits ? 2 : 0) + 3,
+        0,
       );
+    const room = W - 2 - 4;
+    const [label, digits] =
+      need((v) => v.title, true) <= room
+        ? [(v: View) => v.title, true]
+        : need((v) => v.short, true) <= room
+          ? [(v: View) => v.short, true]
+          : [(v: View) => v.short, false];
+    this.tabs.forEach(({ view, chip }, i) => {
+      const on = view === this.active;
+      const chunks: TextChunk[] = [];
+      if (digits)
+        chunks.push(
+          ch(`${i + 1} `, {
+            fg: on ? theme.accent : theme.textMuted,
+            bold: on,
+          }),
+        );
+      chunks.push(
+        ch(label(view), { fg: on ? theme.text : theme.textDim, bold: on }),
+      );
+      chip.box.backgroundColor = on ? theme.selBg : "transparent";
+      chip.text.content = styled(chunks);
     });
-    return out;
-  }
-
-  private rowChunks(n: ExitNode, selected: boolean): TextChunk[] {
-    const out: TextChunk[] = [];
-    const st = statusLabel(n);
-    const isSuggested = n.id === this.suggestedNode()?.id;
-    const nameFg =
-      st === "active"
-        ? theme.green
-        : st === "online"
-          ? theme.text
-          : st === "expired"
-            ? theme.red
-            : theme.textDim;
-    this.cols.forEach((c, i) => {
-      if (i > 0) out.push(ch(" "));
-      switch (c.id) {
-        case "mark":
-          out.push(ch(selected ? "▸" : " ", { fg: theme.accent, bold: true }));
-          out.push(statusDot(st));
-          out.push(ch(isSuggested ? "★" : " ", { fg: theme.yellow }));
-          break;
-        case "name":
-          out.push(
-            ch(fit(n.name, c.width), { fg: nameFg, bold: st === "active" }),
-          );
-          break;
-        case "status":
-          out.push(statusChunk(st, c.width));
-          break;
-        case "location": {
-          const cc = n.countryCode ?? "";
-          const city = n.city ?? n.country ?? "";
-          if (!cc && !city) {
-            out.push(
-              ch(fit(n.isMullvad ? "" : "tailnet", c.width), {
-                fg: theme.textMuted,
-              }),
-            );
-          } else {
-            out.push(ch(fit(cc, 2), { fg: theme.text, bold: true }));
-            out.push(ch(" "));
-            out.push(ch(fit(city, c.width - 3), { fg: theme.textDim }));
-          }
-          break;
-        }
-        case "latency":
-          out.push(latencyChunk(this.latency.get(n.id), c.width));
-          break;
-        case "os":
-          out.push(ch(fit(osLabel(n.os), c.width), { fg: theme.textDim }));
-          break;
-        case "priority":
-          out.push(
-            ch(
-              fit(
-                n.priority !== undefined ? String(n.priority) : "—",
-                c.width,
-                "right",
-              ),
-              { fg: theme.textMuted },
-            ),
-          );
-          break;
-      }
-    });
-    return out;
-  }
-
-  private renderList(): void {
-    if (this.stopped) return;
-    this.renderListTitle();
-    this.colHeader.content = styled(this.headerChunks());
-
-    const s = this.state;
-    const total = this.allNodes.length;
-    const shown = this.nodes.length;
-    let empty: string | null = null;
-    if (!s)
-      empty = this.lastError
-        ? `Could not read Tailscale status.\n${this.lastError}`
-        : "Loading exit nodes…";
-    else if (s.backendState !== "Running")
-      empty = `Tailscale is ${s.backendState}.\nStart it with "tailscale up" and press r to refresh.`;
-    else if (total === 0)
-      empty =
-        "No exit nodes in this tailnet.\n\nAdvertise one with:\ntailscale set --advertise-exit-node\nthen approve it in the admin console.";
-    else if (shown === 0)
-      empty = `No exit nodes match "${this.query.text}" with filter ${this.query.filter}.\nEsc clears the search, 1 shows all.`;
-
-    this.emptyBox.visible = empty !== null;
-    this.rowsBox.visible = empty === null;
-    if (empty !== null) this.emptyText.content = empty;
-    this.renderRows();
-  }
-
-  /** The list title carries the count and, while an action runs, the spinner. */
-  private renderListTitle(): void {
-    if (this.stopped) return;
-    const total = this.allNodes.length;
-    const shown = this.nodes.length;
-    let title =
-      total === shown
-        ? ` Exit nodes · ${total} `
-        : ` Exit nodes · ${shown} of ${total} `;
-    if (this.busy)
-      title += `· ${SPINNER[this.spin % SPINNER.length]} ${this.busy} `;
-    this.listPanel.title = title;
-  }
-
-  private renderRows(): void {
-    if (this.stopped) return;
-    const n = this.rows.length;
-    const maxTop = Math.max(0, this.nodes.length - n);
-    if (this.top > maxTop) this.top = maxTop;
-    if (this.top < 0) this.top = 0;
-    for (let i = 0; i < n; i++) {
-      const idx = this.top + i;
-      const row = this.rows[i]!;
-      const node = this.nodes[idx];
-      if (!node) {
-        row.text.content = "";
-        row.box.backgroundColor = "transparent";
-        continue;
-      }
-      const selected = idx === this.sel;
-      row.text.content = styled(this.rowChunks(node, selected));
-      row.box.backgroundColor = selected
-        ? theme.selBg
-        : idx === this.hover
-          ? theme.hoverBg
-          : "transparent";
-    }
-    this.scrollbar.scrollSize = this.nodes.length;
-    this.scrollbar.viewportSize = n;
-    this.scrollbar.scrollPosition = this.top;
-  }
-
-  private detailsChunks(n: ExitNode | undefined, innerW: number): TextChunk[] {
-    if (!n)
-      return [
-        ch("Select an exit node to see its details.", { fg: theme.textMuted }),
-      ];
-    const out: TextChunk[] = [];
-    const valW = Math.max(8, innerW - 11);
-    const line = (label: string, ...vals: TextChunk[]) => {
-      out.push(ch(fit(label, 11), { fg: theme.textMuted }), ...vals, ch("\n"));
-    };
-    const st = statusLabel(n);
-    out.push(
-      ch(truncate(n.name, innerW), { fg: theme.accent, bold: true }),
-      ch("\n"),
-    );
-    out.push(
-      ch(truncate(n.dnsName || n.hostName, innerW), { fg: theme.textDim }),
-      ch("\n\n"),
-    );
-    line(
-      "Status",
-      statusDot(st),
-      ch(" "),
-      statusChunk(st, 0),
-      ch(n.online && !n.active ? "  (Enter to use)" : "", {
-        fg: theme.textMuted,
-      }),
-    );
-    if (n.active && (!n.online || this.state?.exitNode?.online === false))
-      line("", ch("exit node is offline", { fg: theme.yellow, bold: true }));
-    line("Address", ch(fit(n.ip || "—", valW), { fg: theme.text }));
-    const v6 = n.ips.find((ip) => ip.includes(":"));
-    if (v6) line("", ch(fit(v6, valW), { fg: theme.textDim }));
-    line("Location", ch(fit(locationLong(n), valW)));
-    line(
-      "Type",
-      ch(n.isMullvad ? "Mullvad exit node" : "Tailnet device", {
-        fg: n.isMullvad ? theme.purple : theme.cyan,
-      }),
-    );
-    if (n.active && this.state?.autoExitNode)
-      line("Mode", ch("auto, chosen by Tailscale", { fg: theme.yellow }));
-    if (n.os) line("OS", ch(osLabel(n.os)));
-    if (n.owner) line("Owner", ch(fit(n.owner, valW)));
-    if (n.tags.length > 0)
-      line("Tags", ch(fit(n.tags.join(" "), valW), { fg: theme.textDim }));
-    if (n.priority !== undefined) line("Priority", ch(String(n.priority)));
-    line(
-      "Last seen",
-      ch(n.online ? "online now" : relTime(n.lastSeen), {
-        fg: n.online ? theme.green : theme.textDim,
-      }),
-    );
-    if (n.lastHandshake) line("Handshake", ch(relTime(n.lastHandshake)));
-    line("Path", ch(fit(pathLabel(n), valW), { fg: theme.textDim }));
-    line(
-      "Traffic",
-      ch(`↓ ${humanBytes(n.rxBytes)}  ↑ ${humanBytes(n.txBytes)}`),
-    );
-    const lat = this.latency.get(n.id);
-    const via = this.latencyVia.get(n.id);
-    line(
-      "Latency",
-      latencyChunk(lat, 0),
-      ch(lat === undefined ? "  (p to ping)" : "", { fg: theme.textMuted }),
-    );
-    if (lat !== undefined && lat !== "pending" && via)
-      line("", ch(fit(via, valW), { fg: theme.textMuted }));
-    if (n.id === this.suggestedNode()?.id)
-      line("Suggested", ch("★ Tailscale's pick now (A)", { fg: theme.yellow }));
-    if (n.expired)
-      line("Key", ch("expired, re-authenticate it", { fg: theme.red }));
-    else if (n.keyExpiry)
-      line(
-        "Key expiry",
-        ch(n.keyExpiry.toISOString().slice(0, 10), { fg: theme.textDim }),
-      );
-    if (this.forceArm?.id === n.id && Date.now() < this.forceArm.until) {
-      out.push(
-        ch("\n"),
-        ch("Offline node. Press Enter again to use it anyway.", {
-          fg: theme.yellow,
-        }),
-      );
-    }
-    return out;
-  }
-
-  private renderDetails(): void {
-    if (this.stopped || !this.details.visible) return;
-    const n = this.selected();
-    const innerW = DETAILS_WIDTH - 4;
-    this.detailsText.content = styled(this.detailsChunks(n, innerW));
-    if (!n) {
-      this.setChip(this.btnConnect, "Connect", {
-        bg: theme.chipBg,
-        fg: theme.textMuted,
-      });
-      this.setChip(this.btnPing, "Ping", {
-        bg: theme.chipBg,
-        fg: theme.textMuted,
-      });
-      this.setChip(this.btnCopy, "Copy IP", {
-        bg: theme.chipBg,
-        fg: theme.textMuted,
-      });
-      return;
-    }
-    if (n.active)
-      this.setChip(this.btnConnect, "Disconnect", {
-        bg: theme.btnDangerBg,
-        fg: theme.btnFg,
-        bold: true,
-      });
-    else if (!n.online && this.forceArm?.id === n.id)
-      this.setChip(this.btnConnect, "Connect anyway", {
-        bg: theme.btnDangerBg,
-        fg: theme.btnFg,
-        bold: true,
-      });
-    else
-      this.setChip(this.btnConnect, "Connect", {
-        bg: theme.btnPrimaryBg,
-        fg: theme.btnFg,
-        bold: true,
-      });
-    this.setChip(
-      this.btnPing,
-      this.latency.get(n.id) === "pending" ? "Pinging…" : "Ping",
-      { bg: theme.btnBg, fg: theme.btnFg },
-    );
-    this.setChip(this.btnCopy, "Copy IP", { bg: theme.btnBg, fg: theme.btnFg });
+    setChip(this.helpChip, "?", { fg: theme.accent, bold: true });
   }
 
   private renderToast(): void {
@@ -1279,22 +564,17 @@ export class App {
       this.toastBox.visible = false;
       return;
     }
+    const k = this.toast.kind;
     const bg =
-      this.toast.kind === "ok"
+      k === "ok"
         ? theme.toastOkBg
-        : this.toast.kind === "warn"
+        : k === "warn"
           ? theme.toastWarnBg
-          : this.toast.kind === "error"
+          : k === "error"
             ? theme.toastErrorBg
             : theme.toastInfoBg;
     const icon =
-      this.toast.kind === "ok"
-        ? "✓ "
-        : this.toast.kind === "warn"
-          ? "⚠ "
-          : this.toast.kind === "error"
-            ? "✗ "
-            : "• ";
+      k === "ok" ? "✓ " : k === "warn" ? "⚠ " : k === "error" ? "✗ " : "• ";
     this.toastBox.backgroundColor = bg;
     this.toastText.content = styled([
       ch(icon + truncate(this.toast.text, Math.max(10, this.r.width - 8)), {
@@ -1311,7 +591,12 @@ export class App {
     const labelW = 14;
     const chunks: TextChunk[] = [];
     let lines = 0;
-    for (const [label, text] of HELP_LINES) {
+    const sections: [string, string][] = [
+      ...this.active.help(),
+      ["Views", "1-6 or click a tab · [ ] previous and next view"],
+      ["General", "r/F5 refresh · ? or F1 this help · Esc dismiss · q quit"],
+    ];
+    for (const [label, text] of sections) {
       const wrapped = wrapText(text, Math.max(10, inner - labelW));
       wrapped.forEach((part, j) => {
         if (lines > 0) chunks.push(ch("\n"));
@@ -1331,7 +616,7 @@ export class App {
         : "manual";
     const status: [string, Style][] = [
       [
-        `tsexit v${this.version} · backend ${this.backend.label} · refresh ${refresh}`,
+        `${NAME} v${this.version} · backend ${this.backend.label} · refresh ${refresh}`,
         { fg: theme.textDim },
       ],
     ];
@@ -1344,10 +629,10 @@ export class App {
           `device ${s.self.hostName}${s.self.exitNodeOption ? " (exit node)" : ""}`,
         );
       if (who.length) status.push([who.join(" · "), { fg: theme.textDim }]);
-      const online = this.allNodes.filter((n) => n.online).length;
+      const online = s.nodes.filter((n) => n.online).length;
       const parts = [
         `LAN access ${s.allowLan === null ? "unknown" : s.allowLan ? "on" : "off"}`,
-        `${this.allNodes.length} exit nodes (${online} online)`,
+        `${s.nodes.length} exit nodes (${online} online)`,
       ];
       if (this.lastRefresh)
         parts.push(`updated ${relTime(new Date(this.lastRefresh))}`);
@@ -1368,12 +653,39 @@ export class App {
     this.helpBox.height = this.helpHeight;
   }
 
-  private updateFocusVisuals(): void {
-    const searching = this.mode === "search";
-    this.searchBox.borderColor = searching ? theme.borderFocus : theme.border;
-    this.searchIcon.fg = searching ? theme.accent : theme.textDim;
-    this.listPanel.borderColor = searching ? theme.border : theme.borderFocus;
-    this.listPanel.titleColor = searching ? theme.textDim : theme.accent;
+  private renderAll(): void {
+    if (this.stopped) return;
+    this.renderTabs();
+    this.active.render();
+    this.renderToast();
+  }
+
+  // -------------------------------------------------------------------------
+  // Navigation
+  // -------------------------------------------------------------------------
+
+  private go(id: ViewId, select?: string): void {
+    if (this.stopped) return;
+    const next = this.view(id);
+    if (next === this.active) {
+      if (select) next.onShow(select);
+      next.render();
+      return;
+    }
+    this.active.onHide();
+    this.viewRoots.get(this.active.id)!.visible = false;
+    this.active = next;
+    this.viewRoots.get(next.id)!.visible = true;
+    this.layout();
+    next.onShow(select);
+    this.renderAll();
+    this.r.requestRender();
+  }
+
+  private cycle(delta: number): void {
+    const i = this.views.indexOf(this.active);
+    const n = this.views.length;
+    this.go(this.views[(i + delta + n) % n]!.id);
   }
 
   // -------------------------------------------------------------------------
@@ -1387,12 +699,6 @@ export class App {
       const s = await this.backend.status();
       if (this.stopped) return;
       this.state = s;
-      this.allNodes = s.nodes;
-      const showOs = s.nodes.some((n) => n.os !== "");
-      if (showOs !== this.showOs) {
-        this.showOs = showOs;
-        this.cols = computeColumns(this.colsWidth, showOs);
-      }
       this.lastRefresh = Date.now();
       this.lastError = null;
       const health = s.health.join(" · ");
@@ -1400,7 +706,6 @@ export class App {
         this.lastHealth = health;
         if (health) this.notify(health, "warn", 8000);
       }
-      this.requery(false);
     } catch (e) {
       const msg = errText(e);
       if (msg !== this.lastError) {
@@ -1409,16 +714,8 @@ export class App {
       }
     } finally {
       this.refreshing = false;
-      this.render();
+      this.renderAll();
     }
-  }
-
-  private scheduleRefresh(ms: number): void {
-    const t = setTimeout(() => {
-      this.timeouts.delete(t);
-      void this.refresh();
-    }, ms);
-    this.timeouts.add(t);
   }
 
   private async fetchSuggestion(): Promise<void> {
@@ -1427,265 +724,35 @@ export class App {
       if (this.stopped) return;
       if (s !== this.suggestedName) {
         this.suggestedName = s;
-        this.render();
+        this.renderAll();
       }
     } catch {
       // suggestions are optional
     }
   }
 
-  /** Re-run filter + sort; keep the selected node when possible. */
-  private requery(resetOnMiss: boolean): void {
-    const prevId = this.selectedId;
-    this.nodes = applyQuery(this.allNodes, this.query, (id) =>
-      this.latency.get(id),
-    );
-    let idx = prevId ? this.nodes.findIndex((n) => n.id === prevId) : -1;
-    if (idx < 0) {
-      if (this.nodes.length === 0) idx = -1;
-      else if (resetOnMiss || this.sel < 0) idx = 0;
-      else idx = Math.min(this.sel, this.nodes.length - 1);
-    }
-    this.sel = idx;
-    this.selectedId = idx >= 0 ? this.nodes[idx]!.id : null;
-    if (resetOnMiss && idx === 0) this.top = 0;
-    this.ensureVisible();
-  }
-
-  private ensureVisible(): void {
-    const n = this.rows.length;
-    if (n <= 0 || this.sel < 0) return;
-    if (this.sel < this.top) this.top = this.sel;
-    else if (this.sel >= this.top + n) this.top = this.sel - n + 1;
-    const maxTop = Math.max(0, this.nodes.length - n);
-    if (this.top > maxTop) this.top = maxTop;
-    if (this.top < 0) this.top = 0;
-  }
-
-  // -------------------------------------------------------------------------
-  // Selection and navigation
-  // -------------------------------------------------------------------------
-
-  private select(idx: number): void {
-    if (this.nodes.length === 0) {
-      this.sel = -1;
-      this.selectedId = null;
-      return;
-    }
-    this.sel = Math.max(0, Math.min(idx, this.nodes.length - 1));
-    this.selectedId = this.nodes[this.sel]!.id;
-    this.ensureVisible();
-    this.render();
-  }
-
-  private selectById(id: string): void {
-    const idx = this.nodes.findIndex((n) => n.id === id);
-    if (idx >= 0) this.select(idx);
-  }
-
-  private move(delta: number): void {
-    if (this.nodes.length === 0) return;
-    this.select((this.sel < 0 ? 0 : this.sel) + delta);
-  }
-
-  private pageSize(): number {
-    return Math.max(1, this.rows.length - 1);
-  }
-
-  private scrollBy(delta: number): void {
-    const n = this.rows.length;
-    const maxTop = Math.max(0, this.nodes.length - n);
-    this.top = Math.max(0, Math.min(this.top + delta, maxTop));
-    this.renderRows();
-  }
-
-  private setHover(i: number): void {
-    const idx = i >= 0 ? this.top + i : -1;
-    if (idx === this.hover) return;
-    this.hover = idx;
-    this.pointer(idx >= 0 && idx < this.nodes.length ? "pointer" : "default");
-    this.renderRows();
-  }
-
-  private pointer(style: MousePointerStyle): void {
-    if (this.pointerStyle === style) return;
-    this.pointerStyle = style;
-    try {
-      this.r.setMousePointer(style);
-      this.r.requestRender();
-    } catch {
-      // unsupported terminal
-    }
-  }
-
-  private focusSearch(): void {
-    if (this.helpOpen) return;
-    this.mode = "search";
-    this.search.focus();
-    this.updateFocusVisuals();
-  }
-
-  private focusList(): void {
-    if (this.search.focused) this.search.blur();
-    this.mode = "list";
-    this.updateFocusVisuals();
-  }
-
-  private setSearch(text: string): void {
-    this.search.value = text;
-    if (this.query.text !== text) {
-      this.query.text = text;
-      this.requery(true);
-      this.render();
-    }
-  }
-
-  // -------------------------------------------------------------------------
-  // Input
-  // -------------------------------------------------------------------------
-
-  private onKey = (key: KeyEvent): void => {
-    if (this.stopped) return;
-    if (this.helpOpen) {
-      key.preventDefault();
-      key.stopPropagation();
-      if (
-        ["escape", "return", "q", "f1", "space"].includes(key.name) ||
-        key.sequence === "?"
-      )
-        this.toggleHelp(false);
-      return;
-    }
-    if (key.ctrl && key.name === "c") {
-      key.preventDefault();
-      this.quit();
-      return;
-    }
-    if (this.mode === "search") this.onSearchKey(key);
-    else this.onListKey(key);
-  };
-
-  private onSearchKey(key: KeyEvent): void {
-    switch (key.name) {
-      case "escape":
-        key.preventDefault();
-        this.setSearch("");
-        this.focusList();
-        return;
-      case "return":
-      case "tab":
-        key.preventDefault();
-        this.focusList();
-        return;
-      case "up":
-        key.preventDefault();
-        this.move(-1);
-        return;
-      case "down":
-        key.preventDefault();
-        this.move(1);
-        return;
-      case "pageup":
-        key.preventDefault();
-        this.move(-this.pageSize());
-        return;
-      case "pagedown":
-        key.preventDefault();
-        this.move(this.pageSize());
-        return;
-      default:
-        return;
-    }
-  }
-
-  private onListKey(key: KeyEvent): void {
-    const k = key.name;
-    const shift = key.shift;
-    const ctrl = key.ctrl;
-    if (k === "up" || (k === "k" && !ctrl)) return this.move(-1);
-    if (k === "down" || (k === "j" && !ctrl)) return this.move(1);
-    if (k === "pageup" || (ctrl && (k === "u" || k === "b")))
-      return this.move(-this.pageSize());
-    if (k === "pagedown" || (ctrl && (k === "d" || k === "f")))
-      return this.move(this.pageSize());
-    if (k === "home" || (k === "g" && !shift)) return this.select(0);
-    if (k === "end" || (k === "g" && shift))
-      return this.select(this.nodes.length - 1);
-    if (k === "return") return this.activateSelected();
-    if (k === "d" || k === "x" || k === "backspace" || k === "delete")
-      return void this.disconnect();
-    if (k === "p" && !shift) return this.pingSelected();
-    if (k === "p" && shift) return this.pingAll();
-    if (k === "a" && shift) return void this.connectSuggested();
-    if (k === "a") return void this.toggleAuto();
-    if (k === "l") return void this.toggleLan();
-    if (k === "r" || k === "f5") return this.manualRefresh();
-    if (k === "s" && !shift) return this.nextSort(1);
-    if (k === "s" && shift) return this.toggleDesc();
-    if (k === "f" && !shift) return this.nextFilter(1);
-    if (k === "f" && shift) return this.nextFilter(-1);
-    if (k === "/" || k === "tab" || (ctrl && k === "f")) {
-      key.preventDefault();
-      return this.focusSearch();
-    }
-    if (k === "y" || k === "c") return this.copySelected();
-    if (k === "i") return this.toggleDetails();
-    if (k === "?" || key.sequence === "?" || k === "f1")
-      return this.toggleHelp(true);
-    if (k === "q") return this.quit();
-    if (k === "escape") {
-      if (this.query.text) this.setSearch("");
-      else if (this.toast) this.hideToast();
-      return;
-    }
-    for (const f of FILTERS) {
-      if (k === f.hotkey || key.sequence === f.hotkey)
-        return this.setFilter(f.id);
-    }
-  }
-
-  private onRowMouseDown(i: number, e: MouseEvent): void {
-    const idx = this.top + i;
-    const node = this.nodes[idx];
-    if (!node) return;
-    if (e.button === 2) {
-      this.select(idx);
-      this.pingNode(node);
-      return;
-    }
-    if (e.button === 1) {
-      this.select(idx);
-      this.copyIp(node);
-      return;
-    }
-    if (e.button !== 0) return;
-    if (this.mode === "search") this.focusList();
-    const now = Date.now();
-    const isDouble =
-      this.lastClick.index === idx && now - this.lastClick.at < DOUBLE_CLICK_MS;
-    this.lastClick = { index: idx, at: isDouble ? 0 : now };
-    this.select(idx);
-    if (isDouble) this.activateSelected();
-  }
-
-  private onHeaderClick(e: MouseEvent): void {
-    if (e.button !== 0) return;
-    const local = e.x - this.colHeaderBox.x;
-    let x = 0;
-    for (const c of this.cols) {
-      if (local >= x && local < x + c.width) {
-        if (!c.sort) return;
-        if (this.query.sort === c.sort) this.query.desc = !this.query.desc;
-        else {
-          this.query.sort = c.sort;
-          this.query.desc = false;
-        }
-        this.requery(false);
-        this.render();
-        return;
+  private runNetcheck(): Promise<void> {
+    if (this.netRun) return this.netRun;
+    this.netRun = (async () => {
+      try {
+        this.netReport = await netcheck(this.backend);
+        this.netError = null;
+      } catch (e) {
+        this.netError = errText(e);
+      } finally {
+        this.netRun = null;
+        this.renderAll();
       }
-      x += c.width + COL_GAP;
-    }
+    })();
+    this.renderAll();
+    return this.netRun;
+  }
+
+  private manualRefresh(): void {
+    void this.refresh();
+    void this.fetchSuggestion();
+    this.active.reload?.();
+    this.notify("Refreshed", "info", 1200);
   }
 
   // -------------------------------------------------------------------------
@@ -1710,20 +777,6 @@ export class App {
     this.renderToast();
   }
 
-  private startSpinner(): void {
-    if (this.spinnerTimer) return;
-    this.spinnerTimer = setInterval(() => {
-      this.spin++;
-      this.renderListTitle();
-    }, 100);
-  }
-
-  private stopSpinner(): void {
-    if (!this.spinnerTimer) return;
-    clearInterval(this.spinnerTimer);
-    this.spinnerTimer = null;
-  }
-
   private async runAction(
     label: string,
     fn: () => Promise<void>,
@@ -1734,8 +787,11 @@ export class App {
       return false;
     }
     this.busy = label;
-    this.startSpinner();
-    this.render();
+    this.spinnerTimer ??= setInterval(() => {
+      this.spin++;
+      this.active.renderBusy();
+    }, 100);
+    this.active.renderBusy();
     let ok = false;
     try {
       await fn();
@@ -1743,208 +799,81 @@ export class App {
       if (opts.refresh !== false) {
         this.refreshing = false;
         await this.refresh();
-        this.scheduleRefresh(1500);
-        this.scheduleRefresh(4000);
+        this.later(1500, () => void this.refresh());
+        this.later(4000, () => void this.refresh());
       }
       opts.onOk?.();
     } catch (e) {
       this.notify(errText(e), "error", 8000);
     } finally {
       this.busy = null;
-      this.stopSpinner();
-      this.render();
+      if (this.spinnerTimer) clearInterval(this.spinnerTimer);
+      this.spinnerTimer = null;
+      this.renderAll();
     }
     return ok;
   }
 
-  private activateSelected(): void {
-    const n = this.selected();
-    if (!n) {
-      this.notify("Nothing selected", "info");
-      return;
+  private confirm(key: string, warning: string): boolean {
+    const now = Date.now();
+    if (this.armedKey?.key === key && now < this.armedKey.until) {
+      this.armedKey = null;
+      return true;
     }
-    if (n.active) {
-      void this.disconnect();
-      return;
-    }
-    void this.connect(n);
+    this.armedKey = { key, until: now + CONFIRM_MS };
+    this.notify(warning, "warn", CONFIRM_MS);
+    this.later(CONFIRM_MS + 50, () => this.active.render());
+    return false;
   }
 
-  private async connect(n: ExitNode): Promise<void> {
-    if (n.expired) {
-      this.notify(`${n.name} has an expired key and cannot be used`, "warn");
-      return;
+  private copy(text: string, what?: string): void {
+    let ok = false;
+    try {
+      ok = this.r.copyToClipboardOSC52(text);
+    } catch {
+      ok = false;
     }
-    if (!n.online) {
-      const armed =
-        this.forceArm !== null &&
-        this.forceArm.id === n.id &&
-        Date.now() < this.forceArm.until;
-      if (!armed) {
-        this.forceArm = { id: n.id, until: Date.now() + FORCE_WINDOW_MS };
-        this.notify(
-          `${n.name} is offline. Press Enter again within 4s to use it anyway.`,
-          "warn",
-          FORCE_WINDOW_MS,
-        );
-        this.renderDetails();
-        return;
-      }
-    }
-    this.forceArm = null;
-    const wasAuto = this.state?.autoExitNode === true;
-    await this.runAction(
-      `Connecting to ${n.name}`,
-      () => this.backend.setExitNode(n),
-      {
-        onOk: () =>
-          this.notify(
-            `Internet traffic now exits via ${n.name}${wasAuto ? " (auto exit node off)" : ""}`,
-            "ok",
-          ),
-      },
-    );
-  }
-
-  private async disconnect(): Promise<void> {
-    const cur = this.currentNode();
-    const auto = this.state?.autoExitNode === true;
-    if (!cur && !this.state?.exitNode && !auto) {
-      this.notify("Not using an exit node", "info");
-      return;
-    }
-    await this.runAction(
-      "Disconnecting",
-      () => this.backend.setExitNode(null),
-      {
-        onOk: () =>
-          this.notify(
-            `Exit node disabled, traffic leaves directly${auto ? " (auto exit node off)" : ""}`,
-            "ok",
-          ),
-      },
-    );
-  }
-
-  /** Turn Tailscale's automatic exit node selection on, or off while keeping the current node. */
-  private async toggleAuto(): Promise<void> {
-    if (this.state?.autoExitNode) {
-      const cur = this.currentNode();
-      if (cur) {
-        await this.runAction(
-          `Keeping ${cur.name}`,
-          () => this.backend.setExitNode(cur),
-          {
-            onOk: () =>
-              this.notify(`Auto exit node off, staying on ${cur.name}`, "ok"),
-          },
-        );
-      } else {
-        await this.runAction(
-          "Turning auto exit node off",
-          () => this.backend.setExitNode(null),
-          {
-            onOk: () => this.notify("Auto exit node off", "ok"),
-          },
-        );
-      }
-      return;
-    }
-    await this.runAction(
-      "Enabling auto exit node",
-      () => this.backend.setAutoExitNode(),
-      {
-        onOk: () =>
-          this.notify(
-            "Tailscale now picks and follows the best exit node",
-            "ok",
-          ),
-      },
-    );
-  }
-
-  private async connectSuggested(): Promise<void> {
-    let node = this.suggestedNode();
-    if (!node) {
-      const ok = await this.runAction(
-        "Asking Tailscale for a suggestion",
-        async () => {
-          this.suggestedName = await this.backend.suggest();
-        },
-        { refresh: false },
+    if (ok) this.notify(`Copied ${what ?? text} to the clipboard`, "ok");
+    else
+      this.notify(
+        `Clipboard not available in this terminal (${text})`,
+        "warn",
+        5000,
       );
-      if (!ok) return;
-      node = this.suggestedNode();
-    }
-    if (!node) {
-      this.notify("Tailscale has no exit node suggestion right now", "warn");
-      return;
-    }
-    this.selectById(node.id);
-    if (node.active) {
-      this.notify(`Already using the suggested node ${node.name}`, "info");
-      return;
-    }
-    await this.connect(node);
   }
 
-  private async toggleLan(): Promise<void> {
-    const cur = this.state?.allowLan ?? false;
-    await this.runAction(
-      cur ? "Disabling LAN access" : "Enabling LAN access",
-      () => this.backend.setAllowLan(!cur),
-      {
-        onOk: () =>
-          this.notify(
-            cur
-              ? "LAN access disabled"
-              : "LAN access enabled while using an exit node",
-            "ok",
-          ),
-      },
-    );
-  }
-
-  private manualRefresh(): void {
-    void this.refresh();
-    void this.fetchSuggestion();
-    this.notify("Refreshed", "info", 1200);
-  }
-
-  private pingSelected(): void {
-    const n = this.selected();
-    if (!n) return;
-    this.pingNode(n);
-  }
-
-  private pingNode(n: ExitNode): void {
-    if (this.latency.get(n.id) === "pending") return;
-    this.latency.set(n.id, "pending");
-    this.render();
+  private pingOne(p: Peer, quiet = false): void {
+    if (this.latency.get(p.id) === "pending") return;
+    this.latency.set(p.id, "pending");
+    this.active.render();
     this.backend
-      .ping(n)
+      .ping(p)
       .then((res) => {
         if (this.stopped) return;
-        this.latency.set(n.id, res.rtt);
-        this.latencyVia.set(n.id, res.via);
-        if (this.query.sort === "latency") this.requery(false);
-        this.render();
+        this.latency.set(p.id, res.rtt);
+        this.latencyVia.set(p.id, res.via);
+        this.onLatency();
       })
       .catch((e) => {
         if (this.stopped) return;
-        this.latency.delete(n.id);
-        this.latencyVia.delete(n.id);
-        this.notify(errText(e), "error", 6000);
-        this.render();
+        this.latency.delete(p.id);
+        this.latencyVia.delete(p.id);
+        if (!quiet) this.notify(errText(e), "error", 6000);
+        this.onLatency();
       });
   }
 
-  private pingAll(): void {
+  private onLatency(): void {
+    this.active.onLatency?.();
+    this.active.render();
+  }
+
+  private pingAll(nodes: Peer[]): void {
     if (this.pingAllRunning) {
       this.notify("Still pinging", "info");
       return;
     }
-    const targets = this.nodes.filter(
+    const targets = nodes.filter(
       (n) => n.online && this.latency.get(n.id) !== "pending",
     );
     if (targets.length === 0) {
@@ -1970,18 +899,17 @@ export class App {
           this.latencyVia.delete(n.id);
           firstError ??= errText(e);
         }
-        if (this.query.sort === "latency") this.requery(false);
-        this.render();
+        if (!this.stopped) this.onLatency();
       }
     };
-    this.render();
+    this.active.render();
     const workers: Promise<void>[] = [];
     for (let w = 0; w < Math.min(8, targets.length); w++)
       workers.push(worker());
     void Promise.all(workers).then(() => {
       this.pingAllRunning = false;
       if (this.stopped) return;
-      this.renderToolbar();
+      this.active.render();
       if (firstError)
         this.notify(
           `${replied} of ${targets.length} replied · ${firstError}`,
@@ -1997,77 +925,222 @@ export class App {
     });
   }
 
-  private copySelected(): void {
-    const n = this.selected();
-    if (!n) return;
-    this.copyIp(n);
-  }
-
-  private copyIp(n: ExitNode): void {
-    const text = n.ip || n.dnsName;
-    let ok = false;
+  private async runInteractive(
+    argv: string[],
+    banner: string,
+  ): Promise<number> {
+    if (this.spawn) return this.spawn(argv);
+    this.r.suspend();
     try {
-      ok = this.r.copyToClipboardOSC52(text);
-    } catch {
-      ok = false;
+      process.stdout.write(`\x1b[2J\x1b[H\x1b[2m${banner}\x1b[0m\n\n`);
+      const proc = Bun.spawn(argv, {
+        stdin: "inherit",
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      const code = await proc.exited;
+      // Keep a failure on screen until it has been read.
+      if (code !== 0) {
+        process.stdout.write(
+          `\n\x1b[2m${argv[0]} exited with code ${code}. Press Enter to return.\x1b[0m`,
+        );
+        await new Promise<void>((resolve) => {
+          process.stdin.resume();
+          process.stdin.once("data", () => {
+            process.stdin.pause();
+            resolve();
+          });
+        });
+      }
+      return code;
+    } catch (e) {
+      this.later(0, () => this.notify(errText(e), "error", 6000));
+      return 1;
+    } finally {
+      this.r.resume();
+      this.layout();
+      void this.refresh();
     }
-    if (ok) this.notify(`Copied ${text} to the clipboard`, "ok");
-    else
-      this.notify(
-        `Clipboard not available in this terminal (${text})`,
-        "warn",
-        5000,
-      );
   }
 
-  private setFilter(id: FilterKind): void {
-    if (this.query.filter === id) return;
-    this.query.filter = id;
-    this.requery(true);
-    this.render();
-  }
-
-  private nextFilter(delta: number): void {
-    const i = FILTERS.findIndex((f) => f.id === this.query.filter);
-    const next = FILTERS[(i + delta + FILTERS.length) % FILTERS.length]!;
-    this.setFilter(next.id);
-  }
-
-  private nextSort(delta: number): void {
-    const i = SORTS.findIndex((s) => s.id === this.query.sort);
-    this.query.sort = SORTS[(i + delta + SORTS.length) % SORTS.length]!.id;
-    this.query.desc = false;
-    this.requery(false);
-    this.render();
-  }
-
-  private toggleDesc(): void {
-    this.query.desc = !this.query.desc;
-    this.requery(false);
-    this.render();
-  }
-
-  private toggleDetails(): void {
-    this.detailsWanted = !this.detailsWanted;
-    if (this.detailsWanted && this.r.width < DETAILS_MIN_TOTAL) {
-      this.notify(
-        `Details need at least ${DETAILS_MIN_TOTAL} columns (terminal is ${this.r.width})`,
-        "warn",
-      );
-    }
-    this.layout();
-  }
+  // -------------------------------------------------------------------------
+  // Help and prompt overlays
+  // -------------------------------------------------------------------------
 
   private toggleHelp(open?: boolean): void {
     const next = open ?? !this.helpOpen;
     if (next === this.helpOpen) return;
     this.helpOpen = next;
-    if (next) {
-      if (this.search.focused) this.focusList();
-      this.renderHelp();
-    }
+    if (next) this.renderHelp();
     this.scrim.visible = next;
     this.helpBox.visible = next;
-    this.centerHelp();
+    this.centerOverlays();
+  }
+
+  private openPrompt(opts: PromptOptions): void {
+    this.toggleHelp(false);
+    this.promptOpts = opts;
+    this.promptError = null;
+    this.promptBox.title = ` ${opts.title} `;
+    this.promptLabel.content = opts.label ?? "";
+    this.promptLabel.visible = !!opts.label;
+    this.promptInput.placeholder = opts.placeholder ?? "";
+    this.promptInput.value = opts.value ?? "";
+    this.renderPromptHint();
+    setChip(this.promptOk, opts.confirm, btn.primary);
+    setChip(this.promptCancel, "Cancel", btn.normal);
+    this.scrim.visible = true;
+    this.promptBox.visible = true;
+    this.centerOverlays();
+    this.promptInput.focus();
+    this.promptInput.gotoLineEnd();
+  }
+
+  private renderPromptHint(): void {
+    const o = this.promptOpts;
+    const chunks: TextChunk[] = [];
+    if (this.promptError) chunks.push(ch(this.promptError, { fg: theme.red }));
+    else if (o?.hint) chunks.push(ch(o.hint, { fg: theme.textMuted }));
+    this.promptHint.content = styled(chunks);
+    this.promptHint.visible = chunks.length > 0;
+  }
+
+  private closePrompt(): void {
+    if (!this.promptOpts) return;
+    this.promptOpts = null;
+    this.promptInput.blur();
+    this.scrim.visible = false;
+    this.promptBox.visible = false;
+  }
+
+  private async submitPrompt(): Promise<void> {
+    const o = this.promptOpts;
+    if (!o) return;
+    const value = this.promptInput.value.trim();
+    const err = await o.onSubmit(value);
+    if (typeof err === "string" && err) {
+      this.promptError = err;
+      this.renderPromptHint();
+      return;
+    }
+    if (this.promptOpts === o) this.closePrompt();
+  }
+
+  /** Tab in a path prompt: extend to the longest common prefix, list the candidates when ambiguous. */
+  private completePath(): void {
+    const raw = this.promptInput.value;
+    const home = homedir();
+    const abs = raw.startsWith("~") ? home + raw.slice(1) : raw;
+    const slash = abs.lastIndexOf("/");
+    const dir = slash >= 0 ? abs.slice(0, slash + 1) : "./";
+    const base = slash >= 0 ? abs.slice(slash + 1) : abs;
+    let names: string[];
+    try {
+      names = readdirSync(dir).filter(
+        (n) =>
+          n.startsWith(base) && (base.startsWith(".") || !n.startsWith(".")),
+      );
+    } catch {
+      return;
+    }
+    if (names.length === 0) return;
+    let common = names[0]!;
+    for (const n of names)
+      while (!n.startsWith(common)) common = common.slice(0, -1);
+    let next = (slash >= 0 ? dir : "") + common;
+    if (names.length === 1) {
+      try {
+        if (statSync(join(dir, common)).isDirectory()) next += "/";
+      } catch {
+        // not a directory we can stat
+      }
+    }
+    if (raw.startsWith("~") && next.startsWith(home))
+      next = "~" + next.slice(home.length);
+    this.promptInput.value = next;
+    this.promptInput.gotoLineEnd();
+    this.promptError = null;
+    if (names.length > 1 && common === base) {
+      const list = names.sort().slice(0, 40).join("  ");
+      this.promptHint.content = styled([
+        ch(truncate(list, PROMPT_WIDTH * 2), { fg: theme.textDim }),
+      ]);
+      this.promptHint.visible = true;
+    } else this.renderPromptHint();
+  }
+
+  // -------------------------------------------------------------------------
+  // Keys
+  // -------------------------------------------------------------------------
+
+  private onKey = (key: KeyEvent): void => {
+    if (this.stopped) return;
+    if (this.promptOpts) {
+      this.onPromptKey(key);
+      return;
+    }
+    if (this.helpOpen) {
+      key.preventDefault();
+      key.stopPropagation();
+      if (
+        ["escape", "return", "q", "f1", "space"].includes(key.name) ||
+        key.sequence === "?"
+      )
+        this.toggleHelp(false);
+      return;
+    }
+    if (key.ctrl && key.name === "c") {
+      key.preventDefault();
+      this.quit();
+      return;
+    }
+    if (this.active.typing()) {
+      this.active.onKey(key);
+      return;
+    }
+    const k = key.name;
+    const n = Number(key.sequence);
+    if (
+      !key.ctrl &&
+      !key.meta &&
+      Number.isInteger(n) &&
+      n >= 1 &&
+      n <= this.views.length
+    ) {
+      this.go(this.views[n - 1]!.id);
+      return;
+    }
+    if (key.sequence === "[") return this.cycle(-1);
+    if (key.sequence === "]") return this.cycle(1);
+    if (k === "?" || key.sequence === "?" || k === "f1")
+      return this.toggleHelp(true);
+    if (k === "q" && !key.ctrl) return this.quit();
+    if ((k === "r" && !key.ctrl && !key.shift) || k === "f5")
+      return this.manualRefresh();
+    if (this.active.onKey(key)) return;
+    if (k === "escape" && this.toast) this.hideToast();
+  };
+
+  private onPromptKey(key: KeyEvent): void {
+    const k = key.name;
+    if (key.ctrl && k === "c") {
+      key.preventDefault();
+      this.quit();
+      return;
+    }
+    if (k === "escape") {
+      key.preventDefault();
+      this.closePrompt();
+      return;
+    }
+    if (k === "return" || k === "enter") {
+      key.preventDefault();
+      void this.submitPrompt();
+      return;
+    }
+    if (k === "tab") {
+      key.preventDefault();
+      if (this.promptOpts?.completePaths) this.completePath();
+    }
   }
 }

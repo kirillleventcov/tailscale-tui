@@ -33,6 +33,11 @@ function node(over: Partial<ExitNode> & { id: string }): ExitNode {
     tags: [],
     rxBytes: 0,
     txBytes: 0,
+    inSession: false,
+    ssh: false,
+    taildrop: false,
+    shared: false,
+    routes: [],
     ...over,
   };
 }

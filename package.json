@@ -1,7 +1,7 @@
 {
   "name": "tailscale-exit-node-tui",
-  "version": "0.1.0",
-  "description": "A fast, single-screen terminal UI for choosing, switching and monitoring Tailscale exit nodes. Fully keyboard and mouse driven.",
+  "version": "0.2.0",
+  "description": "Tailscale in your terminal, exit nodes first: a dashboard, exit nodes, devices, network diagnostics, sharing and settings. Keyboard and mouse driven.",
   "type": "module",
   "license": "MIT",
   "bin": {

@@ -1,41 +1,54 @@
 #!/usr/bin/env bun
 import { createCliRenderer } from "@opentui/core";
-import pkg from "../package.json" with { type: "json" };
 import { App } from "./app";
 import { TailscaleBackend, findTailscaleBinary } from "./backend/tailscale";
 import { BackendError } from "./backend/types";
+import { NAME, VERSION } from "./meta";
 import { theme } from "./theme";
+import type { ViewId } from "./view";
 
 interface Cli {
   sudo: boolean;
   refresh: number;
   details: boolean;
   mullvadPing: boolean;
+  view: ViewId;
   bin?: string;
   help: boolean;
   version: boolean;
 }
 
-function usage(): string {
-  return `tsexit ${pkg.version} - Tailscale exit node switcher for the terminal
+/** Names accepted for the optional view argument. */
+const VIEWS: Record<string, ViewId> = {
+  home: "home",
+  exit: "exit",
+  "exit-nodes": "exit",
+  devices: "devices",
+  network: "network",
+  sharing: "sharing",
+  settings: "settings",
+};
 
-Usage: tsexit [options]
+function usage(): string {
+  return `${NAME} ${VERSION} - Tailscale in your terminal, exit nodes first
+
+Usage: ${NAME} [view] [options]
+
+Views: home (default), exit, devices, network, sharing, settings
 
 Options:
-  --sudo              Prefix "tailscale set" with "sudo -n" (passwordless sudo required)
+  --sudo              Prefix state-changing commands with "sudo -n" (passwordless sudo required)
   --bin <path>        Path to the tailscale CLI (default: $TAILSCALE_BIN, PATH, known locations)
   --refresh <sec>     Auto-refresh interval in seconds (default 5, 0 disables)
-  --no-details        Start with the details panel hidden (toggle with i)
+  --no-details        Start with the exit-node details panel hidden (toggle with i)
   --no-mullvad-ping   Never contact api.mullvad.net; Mullvad nodes then have no latency
   -h, --help          Show this help
   -v, --version       Print the version
 
-Keys: arrows/jk move, Enter connect/disconnect, d disconnect, a auto exit node,
-      A suggested node, p ping, / search, f filter, s sort, l LAN access, r refresh,
-      ? help, q quit.
-Mouse: click to select, double-click to connect, wheel to scroll, click chips.
+Keys: 1-6 switch views, arrows/jk move, Enter acts on the selection, / search,
+      r refresh, ? every key and mouse gesture, q quit.
 
-On Linux, "tailscale set" needs root or an operator user. Run once:
+On Linux, changing settings needs root or an operator user. Run once:
   sudo tailscale set --operator=$USER
 `;
 }
@@ -46,6 +59,7 @@ function parseArgs(argv: string[]): Cli {
     refresh: 5,
     details: true,
     mullvadPing: true,
+    view: "home",
     help: false,
     version: false,
   };
@@ -63,6 +77,10 @@ function parseArgs(argv: string[]): Cli {
       }
       return next;
     };
+    if (!raw.startsWith("-") && VIEWS[raw]) {
+      cli.view = VIEWS[raw];
+      continue;
+    }
     switch (flag) {
       case "--sudo":
         cli.sudo = true;
@@ -94,7 +112,9 @@ function parseArgs(argv: string[]): Cli {
         cli.version = true;
         break;
       default:
-        console.error(`Unknown option: ${raw}\n`);
+        console.error(
+          `Unknown ${raw.startsWith("-") ? "option" : "view"}: ${raw}\n`,
+        );
         console.error(usage());
         process.exit(2);
     }
@@ -109,7 +129,7 @@ async function main(): Promise<void> {
     return;
   }
   if (cli.version) {
-    console.log(pkg.version);
+    console.log(VERSION);
     return;
   }
 
@@ -136,7 +156,7 @@ async function main(): Promise<void> {
   }
 
   if (!process.stdout.isTTY || !process.stdin.isTTY) {
-    console.error("tsexit needs an interactive terminal.");
+    console.error(`${NAME} needs an interactive terminal.`);
     process.exit(1);
   }
 
@@ -154,7 +174,8 @@ async function main(): Promise<void> {
       backend,
       refreshMs: cli.refresh * 1000,
       showDetails: cli.details,
-      version: pkg.version,
+      version: VERSION,
+      view: cli.view,
     });
     await app.start();
     await app.done;

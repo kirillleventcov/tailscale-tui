@@ -3,6 +3,7 @@ import { parseTime } from "../format";
 import type {
   ExitNode,
   ExitNodeStatus,
+  Peer,
   SelfInfo,
   TailscaleState,
 } from "../model";
@@ -10,6 +11,7 @@ import { run, type RunResult } from "./exec";
 import { icmpPing } from "./icmp";
 import { MullvadRelays } from "./mullvad";
 import { BackendError, type Backend, type PingResult } from "./types";
+import { cliError, type CliResult } from "./cli";
 
 const KNOWN_PATHS = [
   "/usr/bin/tailscale",
@@ -73,39 +75,21 @@ export class TailscaleBackend implements Backend {
     return run(cmd, opts.timeoutMs ?? this.timeoutMs);
   }
 
+  /** Run `tailscale <args...>`; `privileged` commands honor --sudo. */
+  cli(
+    args: string[],
+    opts: { privileged?: boolean; timeoutMs?: number } = {},
+  ): Promise<CliResult> {
+    return this.run(args, opts);
+  }
+
+  /** argv for an interactive `tailscale` command run in the foreground (ssh). */
+  command(args: string[]): string[] {
+    return [this.bin, ...args];
+  }
+
   private toError(res: RunResult, what: string): BackendError {
-    if (res.timedOut) return new BackendError(`${what}: timed out`);
-    const text =
-      (res.stderr.trim() || res.stdout.trim() || `exit code ${res.code}`)
-        .split("\n")
-        .pop() ?? "";
-    const lower = text.toLowerCase();
-    if (
-      lower.includes("access denied") ||
-      lower.includes("permission denied") ||
-      lower.includes("operation not permitted")
-    ) {
-      return new BackendError(
-        `${what}: access denied`,
-        "Run once: sudo tailscale set --operator=$USER   (or start tsexit with --sudo)",
-      );
-    }
-    if (lower.includes("sudo") && lower.includes("password")) {
-      return new BackendError(
-        `${what}: sudo needs a password`,
-        "Use passwordless sudo, or: sudo tailscale set --operator=$USER",
-      );
-    }
-    if (
-      lower.includes("failed to connect to local tailscaled") ||
-      lower.includes("is tailscale running")
-    ) {
-      return new BackendError(
-        `${what}: tailscaled is not running`,
-        "Start it with: sudo systemctl start tailscaled",
-      );
-    }
-    return new BackendError(`${what}: ${text}`);
+    return cliError(res, what);
   }
 
   async status(): Promise<TailscaleState> {
@@ -160,7 +144,7 @@ export class TailscaleBackend implements Backend {
     if (res.code !== 0) throw this.toError(res, "LAN access");
   }
 
-  async ping(node: ExitNode): Promise<PingResult> {
+  async ping(node: Peer): Promise<PingResult> {
     if (node.isMullvad) {
       if (!this.relays) {
         throw new BackendError(
@@ -231,11 +215,11 @@ function firstV4(ips: string[]): string {
   return ips.find((ip) => ip.includes(".")) ?? ips[0] ?? "";
 }
 
-function parsePeer(
-  key: string,
-  p: unknown,
-  users: Map<string, string>,
-): ExitNode {
+/** TaildropTargetStatus 1 means the peer can receive files right now. */
+const TAILDROP_AVAILABLE = 1;
+const EXIT_ROUTES = new Set(["0.0.0.0/0", "::/0"]);
+
+function parsePeer(key: string, p: unknown, users: Map<string, string>): Peer {
   const ips = strList(g(p, "TailscaleIPs")).map((ip) =>
     ip.replace(/\/\d+$/, ""),
   );
@@ -276,6 +260,32 @@ function parsePeer(
     relay: str(g(p, "Relay")) || undefined,
     curAddr: str(g(p, "CurAddr")) || undefined,
     peerRelay: str(g(p, "PeerRelay")) || undefined,
+    inSession: bool(g(p, "Active")),
+    ssh: strList(g(p, "sshHostKeys")).length > 0,
+    taildrop: g(p, "TaildropTarget") === TAILDROP_AVAILABLE,
+    shared: bool(g(p, "ShareeNode")),
+    routes: strList(g(p, "PrimaryRoutes")).filter((r) => !EXIT_ROUTES.has(r)),
+    created: parseTime(g(p, "Created")),
+  };
+}
+
+function parseSelf(raw: unknown): SelfInfo | null {
+  if (!isObj(raw)) return null;
+  const dnsName = stripDot(str(g(raw, "DNSName")));
+  const hostName = str(g(raw, "HostName"));
+  return {
+    id: str(g(raw, "ID")),
+    name: dnsName.split(".")[0] || hostName,
+    hostName,
+    dnsName,
+    ips: strList(g(raw, "TailscaleIPs")),
+    os: str(g(raw, "OS")),
+    online: bool(g(raw, "Online")),
+    exitNodeOption: bool(g(raw, "ExitNodeOption")),
+    keyExpiry: parseTime(g(raw, "KeyExpiry")),
+    relay: str(g(raw, "Relay")) || undefined,
+    endpoints: strList(g(raw, "Addrs")),
+    created: parseTime(g(raw, "Created")),
   };
 }
 
@@ -283,37 +293,28 @@ export function parseStatus(
   json: unknown,
   prefs: unknown = null,
 ): TailscaleState {
-  const users = new Map<string, string>();
+  const users = new Map<string, { login: string; name: string }>();
   const userMap = g(json, "User");
   if (isObj(userMap)) {
     for (const [id, u] of Object.entries(userMap)) {
       const login = str(g(u, "LoginName")) || str(g(u, "DisplayName"));
-      if (login) users.set(id, login);
+      if (login)
+        users.set(id, { login, name: str(g(u, "DisplayName")) || login });
     }
   }
+  const logins = new Map([...users].map(([id, u]) => [id, u.login]));
 
-  const peers = g(json, "Peer");
-  const nodes: ExitNode[] = [];
-  if (isObj(peers)) {
-    for (const [key, p] of Object.entries(peers)) {
-      if (!isObj(p)) continue;
-      if (!bool(g(p, "ExitNodeOption")) && !bool(g(p, "ExitNode"))) continue;
-      nodes.push(parsePeer(key, p, users));
+  const peerMap = g(json, "Peer");
+  const peers: Peer[] = [];
+  if (isObj(peerMap)) {
+    for (const [key, p] of Object.entries(peerMap)) {
+      if (isObj(p)) peers.push(parsePeer(key, p, logins));
     }
   }
 
   const selfRaw = g(json, "Self");
-  const self: SelfInfo | null = isObj(selfRaw)
-    ? {
-        hostName: str(g(selfRaw, "HostName")),
-        dnsName: stripDot(str(g(selfRaw, "DNSName"))),
-        ips: strList(g(selfRaw, "TailscaleIPs")),
-        os: str(g(selfRaw, "OS")),
-        online: bool(g(selfRaw, "Online")),
-        exitNodeOption: bool(g(selfRaw, "ExitNodeOption")),
-        keyExpiry: parseTime(g(selfRaw, "KeyExpiry")),
-      }
-    : null;
+  const self = parseSelf(selfRaw);
+  const selfUser = g(selfRaw, "UserID");
 
   const ens = g(json, "ExitNodeStatus");
   const exitNode: ExitNodeStatus | null = isObj(ens)
@@ -328,29 +329,37 @@ export function parseStatus(
 
   // ExitNodeStatus is authoritative for "which node is in use"; make the peer flag agree.
   if (exitNode?.id) {
-    for (const n of nodes) n.active = n.active || n.id === exitNode.id;
+    for (const n of peers) n.active = n.active || n.id === exitNode.id;
   }
 
   const allowLanRaw = g(prefs, "ExitNodeAllowLANAccess");
   const autoRaw = g(prefs, "AutoExitNode");
   const tailnet = g(json, "CurrentTailnet");
+  const magicDns = g(tailnet, "MagicDNSEnabled");
+  const cv = g(json, "ClientVersion");
+  const latest = str(g(cv, "LatestVersion"));
 
   return {
     backendState: str(g(json, "BackendState"), "Unknown"),
     version: str(g(json, "Version")),
     self,
+    user: selfUser !== undefined ? (users.get(String(selfUser)) ?? null) : null,
     tailnet: str(g(tailnet, "Name")) || null,
     magicDnsSuffix:
       str(g(json, "MagicDNSSuffix")) ||
       str(g(tailnet, "MagicDNSSuffix")) ||
       null,
+    magicDns: typeof magicDns === "boolean" ? magicDns : null,
+    authUrl: str(g(json, "AuthURL")),
     exitNode,
     allowLan: typeof allowLanRaw === "boolean" ? allowLanRaw : null,
     autoExitNode: isObj(prefs)
       ? typeof autoRaw === "string" && autoRaw !== ""
       : null,
     health: strList(g(json, "Health")),
-    nodes,
+    update: latest && g(cv, "RunningLatest") !== true ? latest : null,
+    nodes: peers.filter((p) => p.exitNodeOption || p.active),
+    peers,
     fetchedAt: Date.now(),
   };
 }
